@@ -1,0 +1,12 @@
+/.idea
+/dataset
+/check_all_files.py
+/check_diversity.py
+/check_raw.py
+/check_raw_values.py
+/essd-14-381-2022.pdf
+/read_pdf.py
+/test.py
+/verify_data.py
+/verify_normalization.py
+/yanZheng.py
