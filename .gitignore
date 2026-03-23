@@ -10,3 +10,6 @@
 /verify_data.py
 /verify_normalization.py
 /yanZheng.py
+/model_save
+/train_out
+/test_output

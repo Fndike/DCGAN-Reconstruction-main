@@ -1,4 +1,5 @@
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import numpy as np
 import pandas as pan
 import math
@@ -31,19 +32,30 @@ def conv3D(input_,output_dim,kernel_size,stride,padding = "SAME",name = "conv3d"
 '''
 定义反卷积层
 '''
-def deconv3D(input_,output_dim,kernel_size,stride,padding = "SAME",name = "deconv3d"):
-    input_dim = input_.get_shape()[-1]
-    input_x = int(input_.get_shape()[1])#x,y,z表示输入层相应维度的值x:height,y:width,z:chennel
-    input_y = int(input_.get_shape()[2])
-    input_z = int(input_.get_shape()[3])
+def deconv3D(input_, output_dim, kernel_size, stride, padding="SAME", name="deconv3d"):
+    input_dim = int(input_.get_shape()[-1])
+    input_shape = tf.shape(input_)
+
     with tf.variable_scope(name):
-        kernel = make_var(name = 'weights',shape = [kernel_size,kernel_size,kernel_size,output_dim,input_dim])
-        print("input_ = ",input_)
-        output = tf.nn.conv3d_transpose(input_,
-                                        kernel,
-                                        [1,input_z*2,input_x*2,input_y*2,output_dim],
-                                        [1,2,2,2,1],
-                                        padding=padding)
+        kernel = make_var(
+            name='weights',
+            shape=[kernel_size, kernel_size, kernel_size, output_dim, input_dim]
+        )
+        output_shape = tf.stack([
+            input_shape[0],
+            input_shape[1] * stride,
+            input_shape[2] * stride,
+            input_shape[3] * stride,
+            output_dim
+        ])
+
+        output = tf.nn.conv3d_transpose(
+            input_,
+            kernel,
+            output_shape,
+            [1, stride, stride, stride, 1],
+            padding=padding
+        )
 
     return output
 

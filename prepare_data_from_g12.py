@@ -28,6 +28,7 @@ parser.add_argument("--train_ratio", type=float, default=0.8, help="Ratio of tra
 parser.add_argument("--batch_save_size", type=int, default=500, help="Number of samples per npz file")
 
 args = parser.parse_args()
+np.random.seed(1234)
 
 GLOBAL_MIN = 1
 GLOBAL_MAX = 8

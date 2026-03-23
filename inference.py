@@ -12,7 +12,8 @@ DCGAN 三维地质模型重建 - 推理脚本
 import numpy as np
 import os
 import argparse
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import glob
 
 from net import Generator
@@ -117,8 +118,7 @@ def inference():
     
     checkpoint = tf.train.latest_checkpoint(args.model_path)
     if checkpoint is None:
-        print(f"[ERROR] 未找到模型文件: {args.model_path}")
-        return
+        raise FileNotFoundError(f"未找到模型文件: {args.model_path}")
     
     print(f"[INFO] 加载模型: {checkpoint}")
     saver.restore(sess, checkpoint)

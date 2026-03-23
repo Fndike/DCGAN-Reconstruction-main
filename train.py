@@ -16,7 +16,8 @@ from __future__ import print_function
 import numpy as np
 import os
 import argparse
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 import glob
 import random
 
@@ -29,7 +30,7 @@ parser.add_argument("--snapshot_dir", default='./model_save', help='Path to save
 parser.add_argument("--out_dir", default='./train_out', help='Path to save training outputs')
 parser.add_argument("--image_size", type=int, default=64, help="Image size (width and height)")
 parser.add_argument("--image_size_z", type=int, default=64, help="Image size (depth)")
-parser.add_argument("--batch_size", type=int, default=4, help="Batch size for training")
+parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training")
 parser.add_argument("--epoch", type=int, default=200, help="Number of training epochs")
 parser.add_argument("--base_lr_g", type=float, default=0.0002, help="Learning rate for generator")
 parser.add_argument("--base_lr_d", type=float, default=0.0002, help="Learning rate for discriminator")
@@ -159,7 +160,13 @@ def train():
     
     data_gen = DataGenerator(args.train_data_dir, args.batch_size, prefix="train")
     total_samples = len(data_gen)
+    
+    if total_samples == 0:
+        raise ValueError(f"在 {args.train_data_dir} 下没有找到 train_data_*.npz 和 train_labels_*.npz")
+    
     steps_per_epoch = total_samples // args.batch_size
+    if steps_per_epoch == 0:
+        steps_per_epoch = 1
     
     print(f"[INFO] 总训练样本数: {total_samples}")
     print(f"[INFO] 每epoch步数: {steps_per_epoch}")
