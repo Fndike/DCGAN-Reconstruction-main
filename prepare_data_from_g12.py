@@ -26,6 +26,7 @@ parser.add_argument("--profile_axis", default="x", choices=["x", "y", "z", "xy",
 parser.add_argument("--profile_spacing", type=int, default=8, help="Spacing between profile slices")
 parser.add_argument("--train_ratio", type=float, default=0.8, help="Ratio of training data")
 parser.add_argument("--batch_save_size", type=int, default=500, help="Number of samples per npz file")
+parser.add_argument("--min_unique_labels", type=int, default=2, help="Minimum unique values required in label block")
 
 args = parser.parse_args()
 np.random.seed(1234)
@@ -134,7 +135,7 @@ def save_batch(data_list, label_list, output_dir, prefix, batch_idx):
 
 def process_all_files(input_dir, output_dir, cube_size=64, stride=64, 
                       profile_axis="x", profile_spacing=8, train_ratio=0.8,
-                      batch_save_size=500):
+                      batch_save_size=500, min_unique_labels=2):
     """
     处理所有 .g12.gz 文件，分批保存
     """
@@ -155,6 +156,11 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     
     total_train_samples = 0
     total_test_samples = 0
+    total_candidate_patches = 0
+    skipped_constant_label_patches = 0
+    skipped_low_variation_label_patches = 0
+    skipped_constant_profile_patches = 0
+    saved_patches = 0
     
     for gz_file in gz_files:
         print(f"\n[INFO] 处理文件: {gz_file}")
@@ -166,8 +172,24 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
         cube_count = 0
         for cube in extract_cubes_generator(vol_3d, cube_size=cube_size, stride=stride):
             cube_count += 1
+            total_candidate_patches += 1
+
+            label_block = cube
+            if label_block.min() == label_block.max():
+                skipped_constant_label_patches += 1
+                continue
+
+            if np.unique(label_block).size < max(2, min_unique_labels):
+                skipped_low_variation_label_patches += 1
+                continue
             
             profile_norm, cube_norm = extract_profiles_normalized(cube)
+
+            if np.unique(profile_norm).size < 2:
+                skipped_constant_profile_patches += 1
+                continue
+
+            saved_patches += 1
             
             if np.random.random() < train_ratio:
                 current_train_data.append(profile_norm)
@@ -209,6 +231,11 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
         print(f"[INFO] 保存最后测试批次 {test_batch_idx}: {saved} 样本")
     
     print(f"\n{'='*50}")
+    print(f"total candidate patches: {total_candidate_patches}")
+    print(f"skipped constant label patches: {skipped_constant_label_patches}")
+    print(f"skipped low-variation label patches: {skipped_low_variation_label_patches}")
+    print(f"skipped constant profile patches: {skipped_constant_profile_patches}")
+    print(f"saved patches: {saved_patches}")
     print(f"[SUCCESS] 数据处理完成!")
     print(f"  训练样本总数: {total_train_samples}")
     print(f"  测试样本总数: {total_test_samples}")
@@ -239,5 +266,6 @@ if __name__ == "__main__":
         profile_axis=args.profile_axis,
         profile_spacing=args.profile_spacing,
         train_ratio=args.train_ratio,
-        batch_save_size=args.batch_save_size
+        batch_save_size=args.batch_save_size,
+        min_unique_labels=args.min_unique_labels
     )
