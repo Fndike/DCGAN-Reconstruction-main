@@ -27,6 +27,24 @@ parser.add_argument("--profile_spacing", type=int, default=8, help="Spacing betw
 parser.add_argument("--train_ratio", type=float, default=0.8, help="Ratio of training data")
 parser.add_argument("--batch_save_size", type=int, default=500, help="Number of samples per npz file")
 parser.add_argument("--min_unique_labels", type=int, default=2, help="Minimum unique values required in label block")
+parser.add_argument(
+    "--max_dominant_ratio",
+    type=float,
+    default=0.95,
+    help="Skip label patches if the dominant class ratio exceeds this threshold"
+)
+parser.add_argument(
+    "--min_entropy",
+    type=float,
+    default=0.2,
+    help="Skip label patches if label entropy is lower than this threshold"
+)
+parser.add_argument(
+    "--min_profile_nonzero_ratio",
+    type=float,
+    default=0.01,
+    help="Skip profile patches if nonzero voxel ratio is lower than this threshold"
+)
 
 args = parser.parse_args()
 np.random.seed(1234)
@@ -119,6 +137,18 @@ def extract_profiles_normalized(cube_3d):
     return profile_data, cube_norm
 
 
+def compute_dominant_ratio(arr):
+    values, counts = np.unique(arr, return_counts=True)
+    return counts.max() / counts.sum()
+
+
+def compute_entropy(arr):
+    values, counts = np.unique(arr, return_counts=True)
+    probs = counts.astype(np.float64) / counts.sum()
+    eps = 1e-12
+    return -np.sum(probs * np.log(probs + eps))
+
+
 def save_batch(data_list, label_list, output_dir, prefix, batch_idx):
     """保存一批数据到npz文件"""
     data_arr = np.array(data_list)
@@ -135,7 +165,9 @@ def save_batch(data_list, label_list, output_dir, prefix, batch_idx):
 
 def process_all_files(input_dir, output_dir, cube_size=64, stride=64, 
                       profile_axis="x", profile_spacing=8, train_ratio=0.8,
-                      batch_save_size=500, min_unique_labels=2):
+                      batch_save_size=500, min_unique_labels=2,
+                      max_dominant_ratio=0.95, min_entropy=0.2,
+                      min_profile_nonzero_ratio=0.01):
     """
     处理所有 .g12.gz 文件，分批保存
     """
@@ -160,6 +192,9 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     skipped_constant_label_patches = 0
     skipped_low_variation_label_patches = 0
     skipped_constant_profile_patches = 0
+    skipped_dominant_label_patches = 0
+    skipped_low_entropy_label_patches = 0
+    skipped_low_information_profile_patches = 0
     saved_patches = 0
     
     for gz_file in gz_files:
@@ -187,6 +222,21 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
 
             if np.unique(profile_norm).size < 2:
                 skipped_constant_profile_patches += 1
+                continue
+
+            dominant_ratio = compute_dominant_ratio(label_block)
+            if dominant_ratio > max_dominant_ratio:
+                skipped_dominant_label_patches += 1
+                continue
+
+            entropy = compute_entropy(label_block)
+            if entropy < min_entropy:
+                skipped_low_entropy_label_patches += 1
+                continue
+
+            profile_nonzero_ratio = np.count_nonzero(profile_norm) / profile_norm.size
+            if profile_nonzero_ratio < min_profile_nonzero_ratio:
+                skipped_low_information_profile_patches += 1
                 continue
 
             saved_patches += 1
@@ -235,6 +285,9 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     print(f"skipped constant label patches: {skipped_constant_label_patches}")
     print(f"skipped low-variation label patches: {skipped_low_variation_label_patches}")
     print(f"skipped constant profile patches: {skipped_constant_profile_patches}")
+    print(f"skipped dominant-label patches: {skipped_dominant_label_patches}")
+    print(f"skipped low-entropy-label patches: {skipped_low_entropy_label_patches}")
+    print(f"skipped low-information-profile patches: {skipped_low_information_profile_patches}")
     print(f"saved patches: {saved_patches}")
     print(f"[SUCCESS] 数据处理完成!")
     print(f"  训练样本总数: {total_train_samples}")
@@ -267,5 +320,8 @@ if __name__ == "__main__":
         profile_spacing=args.profile_spacing,
         train_ratio=args.train_ratio,
         batch_save_size=args.batch_save_size,
-        min_unique_labels=args.min_unique_labels
+        min_unique_labels=args.min_unique_labels,
+        max_dominant_ratio=args.max_dominant_ratio,
+        min_entropy=args.min_entropy,
+        min_profile_nonzero_ratio=args.min_profile_nonzero_ratio
     )

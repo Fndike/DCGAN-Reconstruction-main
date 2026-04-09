@@ -68,24 +68,46 @@ def visualize_result(profile, label, generated, output_path):
     """可视化结果"""
     import matplotlib.pyplot as plt
     
-    profile_2d = profile[:, :, profile.shape[2]//2]
-    label_2d = label[:, :, label.shape[2]//2]
-    generated_2d = generated[:, :, generated.shape[2]//2]
-    
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
-    
-    im0 = axes[0].imshow(profile_2d, cmap='jet')
-    axes[0].set_title("Input Profile (Mid-slice)")
-    plt.colorbar(im0, ax=axes[0])
-    
-    im1 = axes[1].imshow(label_2d, cmap='jet')
-    axes[1].set_title("Ground Truth (Mid-slice)")
-    plt.colorbar(im1, ax=axes[1])
-    
-    im2 = axes[2].imshow(generated_2d, cmap='jet')
-    axes[2].set_title("Generated (Mid-slice)")
-    plt.colorbar(im2, ax=axes[2])
-    
+    def to_3d(arr):
+        if arr.ndim == 4:
+            return arr[..., 0]
+        return arr
+
+    profile_3d = to_3d(profile)
+    label_3d = to_3d(label)
+    generated_3d = to_3d(generated)
+
+    profile_slices = [
+        profile_3d[profile_3d.shape[0]//2, :, :],
+        profile_3d[:, profile_3d.shape[1]//2, :],
+        profile_3d[:, :, profile_3d.shape[2]//2],
+    ]
+    label_slices = [
+        label_3d[label_3d.shape[0]//2, :, :],
+        label_3d[:, label_3d.shape[1]//2, :],
+        label_3d[:, :, label_3d.shape[2]//2],
+    ]
+    generated_slices = [
+        generated_3d[generated_3d.shape[0]//2, :, :],
+        generated_3d[:, generated_3d.shape[1]//2, :],
+        generated_3d[:, :, generated_3d.shape[2]//2],
+    ]
+
+    fig, axes = plt.subplots(3, 3, figsize=(15, 15))
+
+    all_slices = [profile_slices, label_slices, generated_slices]
+    all_titles = [
+        ["Profile X Mid-slice", "Profile Y Mid-slice", "Profile Z Mid-slice"],
+        ["Label X Mid-slice", "Label Y Mid-slice", "Label Z Mid-slice"],
+        ["Generated X Mid-slice", "Generated Y Mid-slice", "Generated Z Mid-slice"],
+    ]
+
+    for r in range(3):
+        for c in range(3):
+            axes[r, c].imshow(all_slices[r][c], cmap='jet')
+            axes[r, c].set_title(all_titles[r][c])
+            axes[r, c].axis('off')
+
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close()
