@@ -117,24 +117,34 @@ def extract_profiles_normalized(cube_3d):
     - 剖面位置：归一化后的真实值
     - 非剖面位置：填充值 FILL_VALUE (0.0)
     """
-    cube_norm = normalize_data_global(cube_3d)
-    
-    profile_data = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
+    # 先提取剖面数据（未归一化）
+    profile_raw = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
     
     size = cube_3d.shape[0]
     pos1 = size // 4       # 16 (for size=64)
     pos2 = 3 * size // 4   # 48 (for size=64)
     
-    profile_data[pos1, :, :] = cube_norm[pos1, :, :]
-    profile_data[pos2, :, :] = cube_norm[pos2, :, :]
+    # 提取剖面位置的原始数据
+    profile_raw[pos1, :, :] = cube_3d[pos1, :, :]
+    profile_raw[pos2, :, :] = cube_3d[pos2, :, :]
     
-    profile_data[:, pos1, :] = cube_norm[:, pos1, :]
-    profile_data[:, pos2, :] = cube_norm[:, pos2, :]
+    profile_raw[:, pos1, :] = cube_3d[:, pos1, :]
+    profile_raw[:, pos2, :] = cube_3d[:, pos2, :]
     
-    profile_data[:, :, pos1] = cube_norm[:, :, pos1]
-    profile_data[:, :, pos2] = cube_norm[:, :, pos2]
+    profile_raw[:, :, pos1] = cube_3d[:, :, pos1]
+    profile_raw[:, :, pos2] = cube_3d[:, :, pos2]
     
-    return profile_data, cube_norm
+    # 只对非填充位置做归一化，填充位置保持 0.0
+    mask = profile_raw != FILL_VALUE
+    profile_norm = np.where(mask, 
+        2.0 * (profile_raw - GLOBAL_MIN) / (GLOBAL_MAX - GLOBAL_MIN) - 1.0, 
+        FILL_VALUE
+    )
+    
+    # 标签数据完整归一化
+    cube_norm = normalize_data_global(cube_3d)
+    
+    return profile_norm, cube_norm
 
 
 def compute_dominant_ratio(arr):
@@ -196,6 +206,8 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     skipped_low_entropy_label_patches = 0
     skipped_low_information_profile_patches = 0
     saved_patches = 0
+    label_std_list = []
+    profile_filled_ratio_list = []
     
     for gz_file in gz_files:
         print(f"\n[INFO] 处理文件: {gz_file}")
@@ -240,6 +252,9 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
                 continue
 
             saved_patches += 1
+            label_std_list.append(np.std(cube_norm[..., 0]))
+            profile_filled = np.any(profile_norm[..., 0] != FILL_VALUE, axis=-1)
+            profile_filled_ratio_list.append(profile_filled.mean())
             
             if np.random.random() < train_ratio:
                 current_train_data.append(profile_norm)
@@ -289,6 +304,14 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     print(f"skipped low-entropy-label patches: {skipped_low_entropy_label_patches}")
     print(f"skipped low-information-profile patches: {skipped_low_information_profile_patches}")
     print(f"saved patches: {saved_patches}")
+    if label_std_list:
+        s = np.array(label_std_list)
+        print("[INFO] label cube_norm std stats (saved patches only):")
+        print(f"    min={s.min():.6f}  p10={np.percentile(s,10):.6f}  p25={np.percentile(s,25):.6f}  p50={np.percentile(s,50):.6f}  p75={np.percentile(s,75):.6f}  p90={np.percentile(s,90):.6f}  max={s.max():.6f}")
+    if profile_filled_ratio_list:
+        r = np.array(profile_filled_ratio_list)
+        print("[INFO] profile filled ratio stats (saved patches only):")
+        print(f"    min={r.min():.6f}  p10={np.percentile(r,10):.6f}  p25={np.percentile(r,25):.6f}  p50={np.percentile(r,50):.6f}  p75={np.percentile(r,75):.6f}  p90={np.percentile(r,90):.6f}  max={r.max():.6f}")
     print(f"[SUCCESS] 数据处理完成!")
     print(f"  训练样本总数: {total_train_samples}")
     print(f"  测试样本总数: {total_test_samples}")

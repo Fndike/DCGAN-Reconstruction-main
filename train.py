@@ -153,6 +153,49 @@ def save_prediction(profile, label, generated, output_dir, step):
                         generated=generated)
 
 
+def save_visual_comparison(profile, label, generated, output_dir, step):
+    """训练过程中保存三方向中间切片对比图"""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    profile = (profile[..., 0] + 1.0) / 2.0
+    label   = (label[..., 0]   + 1.0) / 2.0
+    gen     = (generated[..., 0] + 1.0) / 2.0
+
+    mid_z = profile.shape[2] // 2
+    mid_y = profile.shape[1] // 2
+    mid_x = profile.shape[0] // 2
+
+    fig, axes = plt.subplots(3, 3, figsize=(15, 12))
+
+    axes[0, 0].imshow(profile[:, :, mid_z], cmap='jet', vmin=0, vmax=1)
+    axes[0, 0].set_title("Profile Z-mid")
+    axes[0, 1].imshow(label[:, :, mid_z], cmap='jet', vmin=0, vmax=1)
+    axes[0, 1].set_title("Label Z-mid")
+    axes[0, 2].imshow(gen[:, :, mid_z], cmap='jet', vmin=0, vmax=1)
+    axes[0, 2].set_title("Generated Z-mid")
+
+    axes[1, 0].imshow(profile[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
+    axes[1, 0].set_title("Profile Y-mid")
+    axes[1, 1].imshow(label[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
+    axes[1, 1].set_title("Label Y-mid")
+    axes[1, 2].imshow(gen[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
+    axes[1, 2].set_title("Generated Y-mid")
+
+    axes[2, 0].imshow(profile[mid_x, :, :], cmap='jet', vmin=0, vmax=1)
+    axes[2, 0].set_title("Profile X-mid")
+    axes[2, 1].imshow(label[mid_x, :, :], cmap='jet', vmin=0, vmax=1)
+    axes[2, 1].set_title("Label X-mid")
+    axes[2, 2].imshow(gen[mid_x, :, :], cmap='jet', vmin=0, vmax=1)
+    axes[2, 2].set_title("Generated X-mid")
+
+    plt.tight_layout()
+    out_path = os.path.join(output_dir, f"vis_step_{step:06d}.png")
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close()
+
+
 def train():
     """主训练函数"""
     tf.set_random_seed(args.random_seed)
@@ -266,6 +309,10 @@ def train():
                     gen_val[0], 
                     args.out_dir, 
                     global_step
+                )
+                save_visual_comparison(
+                    batch_data[0], batch_labels[0], gen_val[0],
+                    args.out_dir, global_step
                 )
             
             if global_step % args.save_pred_every == 0:
