@@ -45,6 +45,12 @@ parser.add_argument(
     default=0.01,
     help="Skip profile patches if nonzero voxel ratio is lower than this threshold"
 )
+parser.add_argument(
+    "--min_label_ratio",
+    type=float,
+    default=0.0,
+    help="minimum volume ratio for each label in a patch, e.g. 0.02 means each label must occupy at least 2% of the cube"
+)
 
 args = parser.parse_args()
 np.random.seed(1234)
@@ -177,7 +183,8 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
                       profile_axis="x", profile_spacing=8, train_ratio=0.8,
                       batch_save_size=500, min_unique_labels=2,
                       max_dominant_ratio=0.95, min_entropy=0.2,
-                      min_profile_nonzero_ratio=0.01):
+                      min_profile_nonzero_ratio=0.01,
+                      min_label_ratio=0.0):
     """
     处理所有 .g12.gz 文件，分批保存
     """
@@ -205,6 +212,7 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     skipped_dominant_label_patches = 0
     skipped_low_entropy_label_patches = 0
     skipped_low_information_profile_patches = 0
+    skipped_low_ratio_label_patches = 0
     saved_patches = 0
     label_std_list = []
     profile_filled_ratio_list = []
@@ -229,7 +237,14 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
             if np.unique(label_block).size < max(2, min_unique_labels):
                 skipped_low_variation_label_patches += 1
                 continue
-            
+
+            if min_label_ratio > 0.0:
+                values, counts = np.unique(label_block, return_counts=True)
+                ratios = counts.astype(np.float64) / counts.sum()
+                if (ratios < min_label_ratio).any():
+                    skipped_low_ratio_label_patches += 1
+                    continue
+
             profile_norm, cube_norm = extract_profiles_normalized(cube)
 
             if np.unique(profile_norm).size < 2:
@@ -303,6 +318,7 @@ def process_all_files(input_dir, output_dir, cube_size=64, stride=64,
     print(f"skipped dominant-label patches: {skipped_dominant_label_patches}")
     print(f"skipped low-entropy-label patches: {skipped_low_entropy_label_patches}")
     print(f"skipped low-information-profile patches: {skipped_low_information_profile_patches}")
+    print(f"skipped low-ratio label patches: {skipped_low_ratio_label_patches}")
     print(f"saved patches: {saved_patches}")
     if label_std_list:
         s = np.array(label_std_list)
@@ -346,5 +362,6 @@ if __name__ == "__main__":
         min_unique_labels=args.min_unique_labels,
         max_dominant_ratio=args.max_dominant_ratio,
         min_entropy=args.min_entropy,
-        min_profile_nonzero_ratio=args.min_profile_nonzero_ratio
+        min_profile_nonzero_ratio=args.min_profile_nonzero_ratio,
+        min_label_ratio=args.min_label_ratio
     )
