@@ -13,6 +13,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import datetime
 import numpy as np
 import os
 import argparse
@@ -137,7 +138,7 @@ def save_checkpoint(saver, sess, step):
     """保存模型检查点"""
     checkpoint_path = os.path.join(args.snapshot_dir, 'model')
     saver.save(sess, checkpoint_path, global_step=step)
-    print(f'[INFO] 模型已保存: step {step}')
+    print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 模型已保存: step {step}')
 
 
 def save_prediction(profile, label, generated, output_dir, step):
@@ -262,15 +263,21 @@ def train():
     config.gpu_options.allow_growth = True
     sess = tf.Session(config=config)
     
-    init = tf.global_variables_initializer()
-    sess.run(init)
+    saver = tf.train.Saver(var_list=tf.global_variables(), max_to_keep=5)
     
-    saver = tf.train.Saver(var_list=tf.global_variables(), max_to_keep=10)
+    ckpt = tf.train.get_checkpoint_state(args.snapshot_dir)
+    if ckpt and ckpt.model_checkpoint_path:
+        saver.restore(sess, ckpt.model_checkpoint_path)
+        global_step = int(os.path.basename(ckpt.model_checkpoint_path).split('-')[-1])
+        print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 从 {ckpt.model_checkpoint_path} 恢复模型成功，已训练 {global_step} 步')
+    else:
+        sess.run(tf.global_variables_initializer())
+        global_step = 0
+        print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 未找到 checkpoint，从头开始训练')
+    
     summary_writer = tf.summary.FileWriter(args.snapshot_dir, graph=tf.get_default_graph())
     
-    print(f"[INFO] 开始训练...")
-    
-    global_step = 0
+    print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 开始训练...')
     
     for epoch in range(args.epoch):
         data_gen.reset()
@@ -319,11 +326,12 @@ def train():
                 save_checkpoint(saver, sess, global_step)
             
             if global_step % 50 == 0:
-                print(f'Epoch [{epoch+1}/{args.epoch}] Step [{global_step}] '
+                current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                print(f'{current_time} Epoch [{epoch+1}/{args.epoch}] Step [{global_step}] '
                       f'G_loss: {g_loss_val:.4f} D_loss: {d_loss_val:.4f}')
     
     save_checkpoint(saver, sess, global_step)
-    print("[INFO] 训练完成!")
+    print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 训练完成!')
     
     sess.close()
 
