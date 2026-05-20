@@ -14,6 +14,7 @@ from __future__ import division
 from __future__ import print_function
 
 import datetime
+import sys
 import numpy as np
 import os
 import argparse
@@ -45,6 +46,18 @@ parser.add_argument("--lambda_gan", type=float, default=1.0, help="GAN loss weig
 
 args = parser.parse_args()
 EPS = 1e-12
+
+
+class Logger(object):
+    def __init__(self, terminal, log):
+        self.terminal = terminal
+        self.log = log
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)
+    def flush(self):
+        self.terminal.flush()
+        self.log.flush()
 
 
 def create_directories():
@@ -199,6 +212,10 @@ def save_visual_comparison(profile, label, generated, output_dir, step):
 
 def train():
     """主训练函数"""
+    log_file = open('train_log.txt', 'a', encoding='utf-8')
+    original_stdout = sys.stdout
+    sys.stdout = Logger(sys.stdout, log_file)
+    
     tf.set_random_seed(args.random_seed)
     create_directories()
     
@@ -332,6 +349,9 @@ def train():
     
     save_checkpoint(saver, sess, global_step)
     print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 训练完成!')
+    
+    sys.stdout = original_stdout
+    log_file.close()
     
     sess.close()
 
