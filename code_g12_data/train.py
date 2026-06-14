@@ -31,7 +31,7 @@ parser.add_argument("--train_data_dir", default='./dataset/processed/', help="Di
 parser.add_argument("--snapshot_dir", default='./model_save', help='Path to save model checkpoints')
 parser.add_argument("--out_dir", default='./train_out', help='Path to save training outputs')
 parser.add_argument("--image_size", type=int, default=64, help="Image size (width and height)")
-parser.add_argument("--image_size_z", type=int, default=32, help="Image size (depth)")
+parser.add_argument("--image_size_z", type=int, default=64, help="Image size (depth)")
 parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training")
 parser.add_argument("--epoch", type=int, default=200, help="Number of training epochs")
 parser.add_argument("--base_lr_g", type=float, default=0.0002, help="Learning rate for generator")
@@ -43,7 +43,6 @@ parser.add_argument("--summary_pred_every", type=int, default=100, help="Save su
 parser.add_argument("--write_pred_every", type=int, default=500, help="Write prediction every N steps")
 parser.add_argument("--lambda_l1", type=float, default=100.0, help="L1 loss weight")
 parser.add_argument("--lambda_gan", type=float, default=1.0, help="GAN loss weight")
-parser.add_argument("--lambda_tv", type=float, default=0.1, help="3D Total Variation loss weight")
 
 args = parser.parse_args()
 EPS = 1e-12
@@ -243,12 +242,9 @@ def train():
         shape=[None, args.image_size, args.image_size, args.image_size_z, 3],
         name='train_label'
     )
-
-    # 声明 is_training 占位符，控制 Generator 内部 Dropout
-    is_training_ph = tf.placeholder(tf.bool, shape=[], name='is_training')
-
+    
     print("[INFO] 构建生成器...")
-    gen_output = Generator(image_3D=train_data_ph, gf_dim=64, reuse=False, is_training=is_training_ph, name='generator')
+    gen_output = Generator(image_3D=train_data_ph, gf_dim=64, reuse=False, name='generator')
     
     print("[INFO] 构建判别器...")
     dis_real = Discriminator(train_data_ph, train_label_ph, df_dim=64, reuse=False, name='discriminator')
@@ -257,14 +253,7 @@ def train():
     print("[INFO] 计算损失函数...")
     g_loss_gan = tf.reduce_mean(-tf.log(dis_fake + EPS))
     g_loss_l1 = tf.reduce_mean(tf.abs(gen_output - train_label_ph))
-
-    # 3D Total Variation Loss：约束相邻体素一阶差分，消除孤立噪点
-    tv_x = tf.reduce_mean(tf.abs(gen_output[:, 1:, :, :, :] - gen_output[:, :-1, :, :, :]))
-    tv_y = tf.reduce_mean(tf.abs(gen_output[:, :, 1:, :, :] - gen_output[:, :, :-1, :, :]))
-    tv_z = tf.reduce_mean(tf.abs(gen_output[:, :, :, 1:, :] - gen_output[:, :, :, :-1, :]))
-    g_loss_tv = tv_x + tv_y + tv_z
-
-    g_loss = args.lambda_gan * g_loss_gan + args.lambda_l1 * g_loss_l1 + args.lambda_tv * g_loss_tv
+    g_loss = args.lambda_gan * g_loss_gan + args.lambda_l1 * g_loss_l1
     
     d_loss_real = tf.reduce_mean(-tf.log(dis_real + EPS))
     d_loss_fake = tf.reduce_mean(-tf.log(1 - dis_fake + EPS))
@@ -273,7 +262,6 @@ def train():
     g_loss_sum = tf.summary.scalar('generator_loss', g_loss)
     d_loss_sum = tf.summary.scalar('discriminator_loss', d_loss)
     g_loss_l1_sum = tf.summary.scalar('generator_l1_loss', g_loss_l1)
-    g_loss_tv_sum = tf.summary.scalar('generator_tv_loss', g_loss_tv)
     
     gen_vars = [v for v in tf.trainable_variables() if 'generator' in v.name]
     dis_vars = [v for v in tf.trainable_variables() if 'discriminator' in v.name]
@@ -320,8 +308,7 @@ def train():
             
             feed_dict = {
                 train_data_ph: batch_data,
-                train_label_ph: batch_labels,
-                is_training_ph: True
+                train_label_ph: batch_labels
             }
             
             g_loss_val, d_loss_val, _ = sess.run(
@@ -330,21 +317,16 @@ def train():
             )
             
             if global_step % args.summary_pred_every == 0:
-                g_loss_sum_val, d_loss_sum_val, g_l1_sum_val, g_tv_sum_val = sess.run(
-                    [g_loss_sum, d_loss_sum, g_loss_l1_sum, g_loss_tv_sum],
+                g_loss_sum_val, d_loss_sum_val, g_l1_sum_val = sess.run(
+                    [g_loss_sum, d_loss_sum, g_loss_l1_sum],
                     feed_dict=feed_dict
                 )
                 summary_writer.add_summary(g_loss_sum_val, global_step)
                 summary_writer.add_summary(d_loss_sum_val, global_step)
                 summary_writer.add_summary(g_l1_sum_val, global_step)
-                summary_writer.add_summary(g_tv_sum_val, global_step)
             
             if global_step % args.write_pred_every == 0:
-                # 可视化时关闭 Dropout，获取干净输出
-                gen_val = sess.run(gen_output, feed_dict={
-                    train_data_ph: batch_data,
-                    is_training_ph: False
-                })
+                gen_val = sess.run(gen_output, feed_dict=feed_dict)
                 save_prediction(
                     batch_data[0], 
                     batch_labels[0], 

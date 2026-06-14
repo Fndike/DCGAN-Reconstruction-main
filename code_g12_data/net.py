@@ -92,76 +92,78 @@ def lrelu(x,leak = 0.2,name = 'relu'):
 '''
 进行生成器的输出（128的数据两层卷积的U-Net）
 '''
-def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'generator'):
+def Generator(image_3D,gf_dim = 64,reuse = False,name = 'generator'):
     input_dim = int(image_3D.get_shape()[-1])
-
-    # 如果外部没有传占位符，默认创建一个默认行为
-    if is_training is None:
-        is_training = tf.placeholder_with_default(True, shape=(), name='is_training_default')
-
+    dropout_rate = 0.5
     with tf.variable_scope(name):
         if reuse:
             tf.get_variable_scope().reuse_variables()
         else:
             assert tf.get_variable_scope().reuse is False
+        #卷积层的输入的维度为128的话就是将卷积两次最终的一层的维度为32
 
-        # 下采样（5层，适配 Z=32 输入）
-        # e1: [None, 64, 64, 32, input_dim] → [None, 32, 32, 16, gf_dim]
+        #进行下采样
+        print("第一个网络开始前的维度", image_3D)
+        #第一个卷积层输出：（1*32*32*32*64）
         e1 = batch_norm(conv3D(input_=image_3D, output_dim=gf_dim, kernel_size=4, stride=2, name='g_conv_e1'),
                         name='g_bn_e1')
-        print("e1 shape:", e1.shape)
-
-        # e2: [None, 32, 32, 16, gf_dim] → [None, 16, 16, 8, gf_dim*2]
+        print("第一层网络结束后的维度", e1.shape)
+        # 第二个卷积层（1*16*16*16*128）
         e2 = batch_norm(conv3D(input_=lrelu(e1), output_dim=gf_dim * 2, kernel_size=4, stride=2, name='g_conv_e2'),
                         name='g_bn_e2')
-        print("e2 shape:", e2.shape)
-
-        # e3: [None, 16, 16, 8, gf_dim*2] → [None, 8, 8, 4, gf_dim*4]
+        print("第二层网络结束后的维度", e2.shape)
+        # 第三个卷积层(1*8*8*8*256)
         e3 = batch_norm(conv3D(input_=lrelu(e2), output_dim=gf_dim * 4, kernel_size=4, stride=2, name='g_conv_e3'),
                         name='g_bn_e3')
-        print("e3 shape:", e3.shape)
-
-        # e4: [None, 8, 8, 4, gf_dim*4] → [None, 4, 4, 2, gf_dim*8]
+        print("第三层网络结束后的维度", e3.shape)
+        # 第四个卷积层（1*4*4*4*512）
         e4 = batch_norm(conv3D(input_=lrelu(e3), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e4'),
                         name='g_bn_e4')
-        print("e4 shape:", e4.shape)
-
-        # e5: [None, 4, 4, 2, gf_dim*8] → [None, 2, 2, 1, gf_dim*8]
+        print("第四层网络结束后的维度", e4.shape)
+        # 第五个卷积层（1*2*2*2*512）
         e5 = batch_norm(conv3D(input_=lrelu(e4), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e5'),
                         name='g_bn_e5')
-        print("e5 shape:", e5.shape)
+        print("第五层网络结束后的维度", e5.shape)
+        # 第六个卷积层（1*1*1*1*512）
+        e6 = batch_norm(conv3D(input_=lrelu(e5), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e6'),
+                        name='g_bn_e6')
+        print("进行最终卷积以后的输出 = ", e6.shape)
 
-        # ======= 上采样阶段的 Dropout 动态控制 =======
-        # 动态切换 keep_prob: 训练时为 0.5，推理时为 1.0（不丢弃）
-        current_keep_prob = tf.cond(is_training, lambda: 0.5, lambda: 1.0)
 
-        # d2: [None, 2, 2, 1, gf_dim*8] → [None, 4, 4, 2, gf_dim*8], concat e4
-        d2 = deconv3D(input_=tf.nn.relu(e5), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_deconv_d2')
-        d2 = tf.nn.dropout(d2, current_keep_prob)
+        # 下采样结束，开始进行反卷积上采样
+        #进行第一次反卷积（1*2*2*2*512）
+        d1 = deconv3D(input_=tf.nn.relu(e6), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_deconv_d1')
+        d1 = tf.nn.dropout(d1, dropout_rate)  # 随机抛去无用层
+        d1 = tf.concat([batch_norm(input_=d1, name='g_bn_d1'), e5], 4)
+        print("反卷积第一层", d1.shape)
+
+        #进行第二次反卷积（1*4*4*4*512）
+        d2 = deconv3D(input_=tf.nn.relu(d1), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_deconv_d2')
+        d2 = tf.nn.dropout(d2, dropout_rate)  # 随机扔掉一般的输出
         d2 = tf.concat([batch_norm(input_=d2, name='g_bn_d2'), e4], 4)
-        print("d2 shape:", d2.shape)
+        print("反卷积第二层 = ", d2.shape)
 
-        # d3: [None, 4, 4, 2, gf_dim*8*2] → [None, 8, 8, 4, gf_dim*4], concat e3
+        #进行第三次反卷积（1*8*8*8*256）
         d3 = deconv3D(input_=tf.nn.relu(d2), output_dim=gf_dim * 4, kernel_size=4, stride=2, name='g_deconv_d3')
-        d3 = tf.nn.dropout(d3, current_keep_prob)
+        d3 = tf.nn.dropout(d3, dropout_rate)  # 随机扔掉一般的输出
         d3 = tf.concat([batch_norm(input_=d3, name='g_bn_d3'), e3], 4)
-        print("d3 shape:", d3.shape)
+        print("反卷积第二层 = ", d3.shape)
 
-        # d4: [None, 8, 8, 4, gf_dim*4*2] → [None, 16, 16, 8, gf_dim*2], concat e2
+        #进行第二次反卷积（1*16*16*16*128）
         d4 = deconv3D(input_=tf.nn.relu(d3), output_dim=gf_dim * 2, kernel_size=4, stride=2, name='g_deconv_d4')
-        d4 = tf.nn.dropout(d4, current_keep_prob)
+        d4 = tf.nn.dropout(d4, dropout_rate)  # 随机扔掉一般的输出
         d4 = tf.concat([batch_norm(input_=d4, name='g_bn_d4'), e2], 4)
-        print("d4 shape:", d4.shape)
+        print("反卷积第二层 = ", d4.shape)
 
-        # d5: [None, 16, 16, 8, gf_dim*2*2] → [None, 32, 32, 16, gf_dim], concat e1
+        #进行第二次反卷积（1*32*32*32*64）
         d5 = deconv3D(input_=tf.nn.relu(d4), output_dim=gf_dim, kernel_size=4, stride=2, name='g_deconv_d5')
-        d5 = tf.nn.dropout(d5, current_keep_prob)
+        d5 = tf.nn.dropout(d5, dropout_rate)  # 随机扔掉一般的输出
         d5 = tf.concat([batch_norm(input_=d5, name='g_bn_d5'), e1], 4)
-        print("d5 shape:", d5.shape)
+        print("反卷积第二层 = ", d5.shape)
 
-        # d_final: [None, 32, 32, 16, gf_dim*2] → [None, 64, 64, 32, input_dim]
+        #反卷积最后一层（1*64*64*64*3）
         d_final = deconv3D(input_=tf.nn.relu(d5),output_dim=input_dim,kernel_size=4,stride=2,name='g_deconv_d6')
-        print("d_final shape:", d_final.shape)
+        print("最终反卷积的结果 = ",d_final)
         return tf.nn.tanh(d_final)
 
 

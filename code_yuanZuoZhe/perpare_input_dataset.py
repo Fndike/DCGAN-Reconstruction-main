@@ -20,18 +20,7 @@ import math
 '''
 对txt文档进行读取并且返回一个array的三维数组(mat类型不能使用三维)
 '''
-
-
-def read_npz_3Dfile(filepath):
-    """读取npz格式的批量3D数据，返回形状为(10000, 64, 64, 32)的数组"""
-    npz_data = np.load(filepath)
-    data_arr = npz_data['data']  # 数组名称固定为'data'
-
-    # 校验数据形状
-    assert data_arr.shape == (10000, 64, 64, 32), \
-        f"数据形状错误，期望(10000,64,64,32)，实际{data_arr.shape}"
-    return data_arr
-'''def read_3Dfile(filepath):
+def read_3Dfile(filepath):
     data_sum = []
     f = open(filepath)
     i = 0
@@ -47,7 +36,7 @@ def read_npz_3Dfile(filepath):
     data_arr = data_arr.reshape([64,64,64])
     #print(data_arr)
     return data_arr
-'''
+
 '''
 进行筛选确保进入网络的为大小规格相同的三维arr
 '''
@@ -115,80 +104,6 @@ def standardizate_to_inputdim(data_arr,standard_x,standard_y,standard_z,mode = 0
 进行数据处理并返回相应的数据参数
 '''
 
-
-def handle_batch_3Ddata(npz_filepath, standard_x=64, standard_y=64, standard_z=32, RGB_data=False):
-    """
-    批量处理npz中的数据
-    npz_filepath: npz文件路径
-    返回值: 处理后的训练数据(shape: [10000, 64, 64, 32, 3])
-    """
-    # 读取批量数据
-    batch_data = read_npz_3Dfile(npz_filepath)  # shape: (10000, 64, 64, 32)
-
-    # 标准化尺寸（你的数据已符合64×64×32，可跳过但保留逻辑）
-    processed_batch = []
-    for data_arr in batch_data:
-        # 跳过standardizate_arr（避免强制裁剪为正方体，保留64×64×32）
-        standardized = standardizate_to_inputdim(
-            data_arr,
-            standard_x=standard_x,
-            standard_y=standard_y,
-            standard_z=standard_z,
-            mode=0  # 0=填充，1=resize（你的数据无需处理，此步为兼容）
-        )
-        processed_batch.append(standardized)
-    processed_batch = np.array(processed_batch)  # shape: (10000, 64, 64, 32)
-
-    # 处理通道（单通道转3通道）
-    if not RGB_data:
-        processed_batch = np.expand_dims(processed_batch, axis=-1)  # 增加通道维度 -> (10000,64,64,32,1)
-        processed_batch = np.concatenate([processed_batch] * 3, axis=-1)  # 转3通道 -> (10000,64,64,32,3)
-
-    # 电阻率数据归一化（原代码用0-255归一化，需改为1-2000范围）
-    # 公式：(x - min) / (max - min) * 2 - 1 → 将1~2000映射到[-1,1]（适配GAN的tanh输出）
-    processed_batch = (processed_batch - 1.0) / (2000.0 - 1.0) * 2 - 1
-
-    return processed_batch
-
-'''def handle_3Ddata(
-        trainning_data_path, label_data_path,
-        trainning_data_name, training_data_format,
-        label_data_format, standard_x, standard_y, standard_z,
-        RGB_data=False
-):
-    # 拼接文件路径
-    trainning_data_path = trainning_data_path + trainning_data_name + training_data_format
-    label_data_path = label_data_path + trainning_data_name + label_data_format
-
-    # 根据格式选择读取函数
-    if training_data_format == '.npz':
-        trainning_data_arr = read_npz_3Dfile(trainning_data_path)
-    else:
-        trainning_data_arr = read_3Dfile(trainning_data_path)  # 保留原txt支持
-
-    if label_data_format == '.npz':
-        label_data_arr = read_npz_3Dfile(label_data_path)
-    else:
-        label_data_arr = read_3Dfile(label_data_path)  # 保留原txt支持
-
-    # 后续处理逻辑不变（标准化、维度调整等）
-    trainning_data_arr = standardizate_arr(trainning_data_arr)
-    trainning_data_arr = standardizate_to_inputdim(trainning_data_arr, standard_x, standard_y, standard_z, mode=0)
-    label_data_arr = standardizate_arr(label_data_arr)
-    label_data_arr = standardizate_to_inputdim(label_data_arr, standard_x, standard_y, standard_z, mode=0)
-
-    # 通道填充和归一化（保持不变）
-    if not RGB_data:
-        trainning_data_arr = np.expand_dims(trainning_data_arr.astype(np.float32), axis=3)
-        trainning_data_arr = np.concatenate([trainning_data_arr] * 3, axis=3)
-        label_data_arr = np.expand_dims(label_data_arr.astype(np.float32), axis=3)
-        label_data_arr = np.concatenate([label_data_arr] * 3, axis=3)
-
-    trainning_data_arr = trainning_data_arr / 127.5 - 1.
-    label_data_arr = label_data_arr / 127.5 - 1.
-
-    return trainning_data_arr, label_data_arr'''
-'''
 def handle_3Ddata(trainning_data_path,label_data_path,trainning_data_name,training_data_format,label_data_format,standard_x,standard_y,standard_z,RGB_data = False):#直接将输入的数据变为单个文件的路径，批量的处理写在外面
 
     trainning_data_path = trainning_data_path + trainning_data_name + training_data_format
@@ -216,7 +131,7 @@ def handle_3Ddata(trainning_data_path,label_data_path,trainning_data_name,traini
     label_data_arr = label_data_arr / 127.5 - 1
 
     return trainning_data_arr,label_data_arr
-'''
+
 
 
 

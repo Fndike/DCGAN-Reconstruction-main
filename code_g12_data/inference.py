@@ -15,7 +15,6 @@ import argparse
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 import glob
-from scipy.ndimage import median_filter
 
 from net import Generator
 
@@ -25,7 +24,7 @@ parser.add_argument("--test_data_dir", default='./dataset/processed/', help="Dir
 parser.add_argument("--model_path", default='./model_save/', help="Path to trained model")
 parser.add_argument("--output_dir", default='./test_output/', help="Path to save output results")
 parser.add_argument("--image_size", type=int, default=64, help="Image size (width and height)")
-parser.add_argument("--image_size_z", type=int, default=32, help="Image size (depth)")
+parser.add_argument("--image_size_z", type=int, default=64, help="Image size (depth)")
 parser.add_argument("--batch_size", type=int, default=1, help="Batch size for inference")
 
 args = parser.parse_args()
@@ -129,7 +128,7 @@ def inference():
     )
     
     print("[INFO] 构建生成器...")
-    gen_output = Generator(image_3D=test_data_ph, gf_dim=64, reuse=False, is_training=False, name='generator')
+    gen_output = Generator(image_3D=test_data_ph, gf_dim=64, reuse=False, name='generator')
     
     restore_vars = [v for v in tf.global_variables() if 'generator' in v.name]
     
@@ -161,19 +160,13 @@ def inference():
             batch_labels = test_labels[i:i+args.batch_size]
             
             gen_val = sess.run(gen_output, feed_dict={test_data_ph: batch_data})
-
+            
             for j in range(len(batch_data)):
-                raw_gen = gen_val[j]  # 形状: [64, 64, 32, 3]
-
-                # 直接对连续 [-1,1] 空间特征矩阵进行 3D 中值滤波
-                # size=(3,3,3,1): 空间维度平滑，通道维度不滤波
-                filtered_gen = median_filter(raw_gen, size=(3, 3, 3, 1))
-
                 output_path = os.path.join(args.output_dir, f'result_{sample_idx:04d}.npz')
-                save_result(batch_data[j], batch_labels[j], filtered_gen, output_path)
-
+                save_result(batch_data[j], batch_labels[j], gen_val[j], output_path)
+                
                 vis_path = os.path.join(args.output_dir, f'result_{sample_idx:04d}.png')
-                visualize_result(batch_data[j], batch_labels[j], filtered_gen, vis_path)
+                visualize_result(batch_data[j], batch_labels[j], gen_val[j], vis_path)
                 
                 sample_idx += 1
         

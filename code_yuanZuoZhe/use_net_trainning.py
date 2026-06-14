@@ -56,10 +56,8 @@ parser.add_argument("--save_pred_every", type=int, default=1000, help="times to 
 parser.add_argument("--lamda_lc_weight", type=float, default=1.0, help="Lc lamda") #训练中Lc_Loss前的乘数
 parser.add_argument("--lamda_gan_weight", type=float, default=1.0, help="GAN lamda") #训练中GAN_Loss前的乘数
 parser.add_argument("--lamda_lc_weight_fortest", type=float, default=100.0, help="Lc lamda") #训练中Lc_Loss前的乘数
-parser.add_argument("--train_data_format", default='.npz', help="format of training datas.")
-parser.add_argument("--train_label_format", default='.npz', help="format of training labels.")
-'parser.add_argument("--train_data_format", default='.txt', help="format of training datas.") #网络训练输入的数据的格式(图片在CGAN中被当做条件)    暂定为txt文件'
-'parser.add_argument("--train_label_format", default='.txt', help="format of training labels.") #网络训练输入的标签的格式(标签在CGAN中被当做真样本)    暂定为txt文件'
+parser.add_argument("--train_data_format", default='.txt', help="format of training datas.") #网络训练输入的数据的格式(图片在CGAN中被当做条件)    暂定为txt文件
+parser.add_argument("--train_label_format", default='.txt', help="format of training labels.") #网络训练输入的标签的格式(标签在CGAN中被当做真样本)    暂定为txt文件
 parser.add_argument("--train_data_path", default='./dataset/train_3Dimage/', help="path of training datas.") #网络训练输入的图片路径
 parser.add_argument("--train_label_path", default='./dataset/train_label/', help="path of training labels.") #网络训练输入的标签路径
 parser.add_argument("--profile_path",default='./dataset/profile_data/',help="parh of profile data")#进行上下文loss计算相关性的时候需要的剖面的数据
@@ -213,29 +211,15 @@ def trainning_main():
     tf.set_random_seed(args.random_seed)#初始化随机数
     create_save_file(args.snapshot_dir,args.out_dir)#创建参数文件夹
     train_data_list = glob.glob(os.path.join(args.train_data_path,'*'))#训练输入的路径列表、
-    # 读取批量NPZ数据（替换原单文件读取逻辑）
-    train_npz_path = os.path.join(args.train_data_path, "your_dataset.npz")  # 你的npz文件路径
-    batch_data = handle_batch_3Ddata(
-        npz_filepath=train_npz_path,
-        standard_x=args.image_size,
-        standard_y=args.image_size,
-        standard_z=args.image_size_z
-    )  # shape: (10000, 64, 64, 32, 3)
 
-    # 调整占位符形状（适配批量数据）
-    train_data = tf.placeholder(
-        tf.float32,
-        shape=[None, args.image_size, args.image_size, args.image_size_z, 3],  # None表示批量大小可变
-        name='train_data'
-    )
-    '''  #进行三维数据的读取和tf占位
+    #进行三维数据的读取和tf占位
     train_data = tf.placeholder(tf.float32,
                    shape=[1,args.image_size,args.image_size,args.image_size_z,3],
                    name='train_data')#输入训练图像
     train_label = tf.placeholder(tf.float32,
                    shape=[1,args.image_size,args.image_size,args.image_size_z,3],
                    name='train_label')#输入训练图像标签
-'''
+
     #生成器输出
     gen_output = Generator(image_3D=train_data)
     #判别器的判别结果
