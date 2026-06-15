@@ -178,18 +178,18 @@ def save_visual_comparison(profile, label, generated, output_dir, step):
     label   = (label[..., 0]   + 1.0) / 2.0
     gen     = (generated[..., 0] + 1.0) / 2.0
 
-    mid_z = profile.shape[2] // 2
+    vis_z = 8
     mid_y = profile.shape[1] // 2
     mid_x = profile.shape[0] // 2
 
     fig, axes = plt.subplots(3, 3, figsize=(15, 12))
 
-    axes[0, 0].imshow(profile[:, :, mid_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 0].set_title("Profile Z-mid")
-    axes[0, 1].imshow(label[:, :, mid_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 1].set_title("Label Z-mid")
-    axes[0, 2].imshow(gen[:, :, mid_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 2].set_title("Generated Z-mid")
+    axes[0, 0].imshow(profile[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
+    axes[0, 0].set_title("Profile Z=8")
+    axes[0, 1].imshow(label[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
+    axes[0, 1].set_title("Label Z=8")
+    axes[0, 2].imshow(gen[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
+    axes[0, 2].set_title("Generated Z=8")
 
     axes[1, 0].imshow(profile[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
     axes[1, 0].set_title("Profile Y-mid")
