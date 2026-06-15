@@ -35,7 +35,7 @@ parser.add_argument("--image_size_z", type=int, default=32, help="Image size (de
 parser.add_argument("--batch_size", type=int, default=1, help="Batch size for training")
 parser.add_argument("--epoch", type=int, default=200, help="Number of training epochs")
 parser.add_argument("--base_lr_g", type=float, default=0.0002, help="Learning rate for generator")
-parser.add_argument("--base_lr_d", type=float, default=0.0002, help="Learning rate for discriminator")
+parser.add_argument("--base_lr_d", type=float, default=0.00002, help="Learning rate for discriminator")
 parser.add_argument("--beta1", type=float, default=0.5, help="Beta1 for Adam optimizer")
 parser.add_argument("--random_seed", type=int, default=1234, help="Random seed")
 parser.add_argument("--save_pred_every", type=int, default=1000, help="Save model every N steps")
@@ -43,6 +43,7 @@ parser.add_argument("--summary_pred_every", type=int, default=100, help="Save su
 parser.add_argument("--write_pred_every", type=int, default=500, help="Write prediction every N steps")
 parser.add_argument("--lambda_l1", type=float, default=100.0, help="L1 loss weight")
 parser.add_argument("--lambda_gan", type=float, default=1.0, help="GAN loss weight")
+parser.add_argument("--lambda_cos", type=float, default=10.0, help="Cosine similarity loss weight")
 parser.add_argument("--lambda_tv", type=float, default=0.1, help="3D Total Variation loss weight")
 
 args = parser.parse_args()
@@ -255,24 +256,41 @@ def train():
     dis_fake = Discriminator(train_data_ph, gen_output, df_dim=64, reuse=True, name='discriminator')
     
     print("[INFO] 计算损失函数...")
-    g_loss_gan = tf.reduce_mean(-tf.log(dis_fake + EPS))
+
+    # ======= LSGAN 判别器损失（MSE 替代不稳定交叉熵）=======
+    d_loss_real = tf.reduce_mean(tf.square(dis_real - 1.0))
+    d_loss_fake = tf.reduce_mean(tf.square(dis_fake - 0.0))
+    d_loss = 0.5 * (d_loss_real + d_loss_fake)
+
+    # ======= 生成器对抗损失（LSGAN）=======
+    g_loss_gan = tf.reduce_mean(tf.square(dis_fake - 1.0))
+
+    # ======= L1 重建损失 =======
     g_loss_l1 = tf.reduce_mean(tf.abs(gen_output - train_label_ph))
 
-    # 3D Total Variation Loss：约束相邻体素一阶差分，消除孤立噪点
+    # ======= 余弦相似度联合损失 L_cos =======
+    dot_product = tf.reduce_sum(gen_output * train_label_ph, axis=[1, 2, 3, 4])
+    norm_gen = tf.sqrt(tf.reduce_sum(tf.square(gen_output), axis=[1, 2, 3, 4]))
+    norm_label = tf.sqrt(tf.reduce_sum(tf.square(train_label_ph), axis=[1, 2, 3, 4]))
+    cosine_similarity = dot_product / (norm_gen * norm_label + EPS)
+    g_loss_cos = tf.reduce_mean(1.0 - cosine_similarity)
+
+    # ======= 3D Total Variation Loss =======
     tv_x = tf.reduce_mean(tf.abs(gen_output[:, 1:, :, :, :] - gen_output[:, :-1, :, :, :]))
     tv_y = tf.reduce_mean(tf.abs(gen_output[:, :, 1:, :, :] - gen_output[:, :, :-1, :, :]))
     tv_z = tf.reduce_mean(tf.abs(gen_output[:, :, :, 1:, :] - gen_output[:, :, :, :-1, :]))
     g_loss_tv = tv_x + tv_y + tv_z
 
-    g_loss = args.lambda_gan * g_loss_gan + args.lambda_l1 * g_loss_l1 + args.lambda_tv * g_loss_tv
-    
-    d_loss_real = tf.reduce_mean(-tf.log(dis_real + EPS))
-    d_loss_fake = tf.reduce_mean(-tf.log(1 - dis_fake + EPS))
-    d_loss = d_loss_real + d_loss_fake
-    
+    # ======= 生成器总损失 =======
+    g_loss = (args.lambda_gan * g_loss_gan
+              + args.lambda_l1 * g_loss_l1
+              + args.lambda_cos * g_loss_cos
+              + args.lambda_tv * g_loss_tv)
+
     g_loss_sum = tf.summary.scalar('generator_loss', g_loss)
     d_loss_sum = tf.summary.scalar('discriminator_loss', d_loss)
     g_loss_l1_sum = tf.summary.scalar('generator_l1_loss', g_loss_l1)
+    g_loss_cos_sum = tf.summary.scalar('generator_cos_loss', g_loss_cos)
     g_loss_tv_sum = tf.summary.scalar('generator_tv_loss', g_loss_tv)
     
     gen_vars = [v for v in tf.trainable_variables() if 'generator' in v.name]
@@ -283,10 +301,9 @@ def train():
     
     g_optimizer = tf.train.AdamOptimizer(args.base_lr_g, beta1=args.beta1)
     d_optimizer = tf.train.AdamOptimizer(args.base_lr_d, beta1=args.beta1)
-    
+
     g_train_op = g_optimizer.minimize(g_loss, var_list=gen_vars)
     d_train_op = d_optimizer.minimize(d_loss, var_list=dis_vars)
-    train_op = tf.group(d_train_op, g_train_op)
     
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -307,36 +324,46 @@ def train():
     summary_writer = tf.summary.FileWriter(args.snapshot_dir, graph=tf.get_default_graph())
     
     print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 开始训练...')
-    
+
+    d_loss_val = 1.0  # 历史状态变量，初始化为 1.0 确保 D 参与首轮训练
+
     for epoch in range(args.epoch):
         data_gen.reset()
-        
+
         for step in range(steps_per_epoch):
             global_step += 1
-            
+
             batch_data, batch_labels = data_gen.get_batch()
             if batch_data is None:
                 break
-            
+
             feed_dict = {
                 train_data_ph: batch_data,
                 train_label_ph: batch_labels,
                 is_training_ph: True
             }
-            
-            g_loss_val, d_loss_val, _ = sess.run(
-                [g_loss, d_loss, train_op], 
-                feed_dict=feed_dict
-            )
-            
+
+            # 自适应对抗训练：基于上一轮 d_loss_val 决定是否更新 D，单次 sess.run 避免重复前向传播
+            if d_loss_val > 0.05:
+                g_loss_val, d_loss_val, _, _ = sess.run(
+                    [g_loss, d_loss, g_train_op, d_train_op],
+                    feed_dict=feed_dict
+                )
+            else:
+                g_loss_val, d_loss_val, _ = sess.run(
+                    [g_loss, d_loss, g_train_op],
+                    feed_dict=feed_dict
+                )
+
             if global_step % args.summary_pred_every == 0:
-                g_loss_sum_val, d_loss_sum_val, g_l1_sum_val, g_tv_sum_val = sess.run(
-                    [g_loss_sum, d_loss_sum, g_loss_l1_sum, g_loss_tv_sum],
+                g_loss_sum_val, d_loss_sum_val, g_l1_sum_val, g_cos_sum_val, g_tv_sum_val = sess.run(
+                    [g_loss_sum, d_loss_sum, g_loss_l1_sum, g_loss_cos_sum, g_loss_tv_sum],
                     feed_dict=feed_dict
                 )
                 summary_writer.add_summary(g_loss_sum_val, global_step)
                 summary_writer.add_summary(d_loss_sum_val, global_step)
                 summary_writer.add_summary(g_l1_sum_val, global_step)
+                summary_writer.add_summary(g_cos_sum_val, global_step)
                 summary_writer.add_summary(g_tv_sum_val, global_step)
             
             if global_step % args.write_pred_every == 0:
@@ -360,10 +387,11 @@ def train():
             if global_step % args.save_pred_every == 0:
                 save_checkpoint(saver, sess, global_step)
             
-            if global_step % 50 == 0:
+            if global_step % 200 == 0:
                 current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 print(f'{current_time} Epoch [{epoch+1}/{args.epoch}] Step [{global_step}] '
                       f'G_loss: {g_loss_val:.4f} D_loss: {d_loss_val:.4f}')
+                sys.stdout.flush()
     
     save_checkpoint(saver, sess, global_step)
     print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 训练完成!')
