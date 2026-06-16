@@ -78,29 +78,31 @@ def visualize_result(profile, label, generated, output_path):
     label_3d = to_3d(label)
     generated_3d = to_3d(generated)
 
+    x_slice, y_slice, z_slice = 32, 32, 24
+
     profile_slices = [
-        profile_3d[profile_3d.shape[0]//2, :, :],
-        profile_3d[:, profile_3d.shape[1]//2, :],
-        profile_3d[:, :, 8],
+        profile_3d[x_slice, :, :],
+        profile_3d[:, y_slice, :],
+        profile_3d[:, :, z_slice],
     ]
     label_slices = [
-        label_3d[label_3d.shape[0]//2, :, :],
-        label_3d[:, label_3d.shape[1]//2, :],
-        label_3d[:, :, 8],
+        label_3d[x_slice, :, :],
+        label_3d[:, y_slice, :],
+        label_3d[:, :, z_slice],
     ]
     generated_slices = [
-        generated_3d[generated_3d.shape[0]//2, :, :],
-        generated_3d[:, generated_3d.shape[1]//2, :],
-        generated_3d[:, :, 8],
+        generated_3d[x_slice, :, :],
+        generated_3d[:, y_slice, :],
+        generated_3d[:, :, z_slice],
     ]
 
     fig, axes = plt.subplots(3, 3, figsize=(15, 15))
 
     all_slices = [profile_slices, label_slices, generated_slices]
     all_titles = [
-        ["Profile X Mid-slice", "Profile Y Mid-slice", "Profile Z=8 Slice"],
-        ["Label X Mid-slice", "Label Y Mid-slice", "Label Z=8 Slice"],
-        ["Generated X Mid-slice", "Generated Y Mid-slice", "Generated Z=8 Slice"],
+        ["Profile X=32 Slice", "Profile Y=32 Slice", "Profile Z=24 Slice"],
+        ["Label X=32 Slice", "Label Y=32 Slice", "Label Z=24 Slice"],
+        ["Generated X=32 Slice", "Generated Y=32 Slice", "Generated Z=24 Slice"],
     ]
 
     for r in range(3):

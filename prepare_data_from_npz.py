@@ -6,7 +6,7 @@
 功能：
 1. 直接读取 .npz 文件（内部键为 'data'），float16→float32 无损转换
 2. 对每个样本进行局部阶梯归一化（动态映射到 [-1, 1]）
-3. 提取 Z轴16切片 的多方向剖面数据作为条件输入
+3. 提取多方向剖面数据作为条件输入（Fence 测线网格：X[16,32,48] Y[16,32,48] Z[8,24]）
 4. 分批保存为 .npz 格式供训练使用
 '''
 
@@ -65,14 +65,17 @@ def extract_profiles_normalized(cube_3d, unique_vals, K):
     """
     profile_raw = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
     
-    # X轴切片
+    # X轴切片（3张）：Fence 测线网格索引 16, 32, 48
     profile_raw[16, :, :] = cube_3d[16, :, :]
+    profile_raw[32, :, :] = cube_3d[32, :, :]
     profile_raw[48, :, :] = cube_3d[48, :, :]
-    # Y轴切片
+    # Y轴切片（3张）：Fence 测线网格索引 16, 32, 48
     profile_raw[:, 16, :] = cube_3d[:, 16, :]
+    profile_raw[:, 32, :] = cube_3d[:, 32, :]
     profile_raw[:, 48, :] = cube_3d[:, 48, :]
-    # Z轴切片 (仅在16处)
-    profile_raw[:, :, 16] = cube_3d[:, :, 16]
+    # Z轴切片（2张）：Fence 测线网格索引 8, 24
+    profile_raw[:, :, 8] = cube_3d[:, :, 8]
+    profile_raw[:, :, 24] = cube_3d[:, :, 24]
     
     # 只对非填充位置做阶梯归一化，填充位置保持 0.0
     mask = profile_raw != FILL_VALUE
@@ -112,7 +115,7 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
     print(f"[INFO] 找到 {len(npz_files)} 个 .npz 文件")
     print(f"[INFO] 填充值: {FILL_VALUE}")
     print(f"[INFO] 归一化方式: 样本级局部阶梯归一化")
-    print(f"[INFO] 剖面切片: X[16,48] Y[16,48] Z[16]")
+    print(f"[INFO] 剖面切片: Fence 测线网格 X[16,32,48] Y[16,32,48] Z[8,24]")
     
     train_batch_idx = 0
     test_batch_idx = 0
@@ -227,7 +230,7 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
         f.write(f"test_samples: {total_test_samples}\n")
         f.write(f"normalization: staircase_per_sample\n")
         f.write(f"fill_value: {FILL_VALUE}\n")
-        f.write(f"profile_slices: X[16,48] Y[16,48] Z[16]\n")
+        f.write(f"profile_slices: X[16,32,48] Y[16,32,48] Z[8,24]\n")
 
 
 if __name__ == "__main__":

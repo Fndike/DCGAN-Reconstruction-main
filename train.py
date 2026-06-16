@@ -179,32 +179,32 @@ def save_visual_comparison(profile, label, generated, output_dir, step):
     label   = (label[..., 0]   + 1.0) / 2.0
     gen     = (generated[..., 0] + 1.0) / 2.0
 
-    vis_z = 8
-    mid_y = profile.shape[1] // 2
-    mid_x = profile.shape[0] // 2
+    vis_z = 24
+    vis_y = 32
+    vis_x = 32
 
     fig, axes = plt.subplots(3, 3, figsize=(15, 12))
 
     axes[0, 0].imshow(profile[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 0].set_title("Profile Z=8")
+    axes[0, 0].set_title("Profile Z=24")
     axes[0, 1].imshow(label[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 1].set_title("Label Z=8")
+    axes[0, 1].set_title("Label Z=24")
     axes[0, 2].imshow(gen[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 2].set_title("Generated Z=8")
+    axes[0, 2].set_title("Generated Z=24")
 
-    axes[1, 0].imshow(profile[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
-    axes[1, 0].set_title("Profile Y-mid")
-    axes[1, 1].imshow(label[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
-    axes[1, 1].set_title("Label Y-mid")
-    axes[1, 2].imshow(gen[:, mid_y, :], cmap='jet', vmin=0, vmax=1)
-    axes[1, 2].set_title("Generated Y-mid")
+    axes[1, 0].imshow(profile[:, vis_y, :], cmap='jet', vmin=0, vmax=1)
+    axes[1, 0].set_title("Profile Y=32")
+    axes[1, 1].imshow(label[:, vis_y, :], cmap='jet', vmin=0, vmax=1)
+    axes[1, 1].set_title("Label Y=32")
+    axes[1, 2].imshow(gen[:, vis_y, :], cmap='jet', vmin=0, vmax=1)
+    axes[1, 2].set_title("Generated Y=32")
 
-    axes[2, 0].imshow(profile[mid_x, :, :], cmap='jet', vmin=0, vmax=1)
-    axes[2, 0].set_title("Profile X-mid")
-    axes[2, 1].imshow(label[mid_x, :, :], cmap='jet', vmin=0, vmax=1)
-    axes[2, 1].set_title("Label X-mid")
-    axes[2, 2].imshow(gen[mid_x, :, :], cmap='jet', vmin=0, vmax=1)
-    axes[2, 2].set_title("Generated X-mid")
+    axes[2, 0].imshow(profile[vis_x, :, :], cmap='jet', vmin=0, vmax=1)
+    axes[2, 0].set_title("Profile X=32")
+    axes[2, 1].imshow(label[vis_x, :, :], cmap='jet', vmin=0, vmax=1)
+    axes[2, 1].set_title("Label X=32")
+    axes[2, 2].imshow(gen[vis_x, :, :], cmap='jet', vmin=0, vmax=1)
+    axes[2, 2].set_title("Generated X=32")
 
     plt.tight_layout()
     out_path = os.path.join(output_dir, f"vis_step_{step:06d}.png")
@@ -255,15 +255,15 @@ def train():
     dis_real = Discriminator(train_data_ph, train_label_ph, df_dim=64, reuse=False, name='discriminator')
     dis_fake = Discriminator(train_data_ph, gen_output, df_dim=64, reuse=True, name='discriminator')
     
-    print("[INFO] 计算损失函数...")
+    print("[INFO] 计算最小二乘对抗损失（带单侧标签平滑）...")
 
-    # ======= LSGAN 判别器损失（MSE 替代不稳定交叉熵）=======
-    d_loss_real = tf.reduce_mean(tf.square(dis_real - 1.0))
-    d_loss_fake = tf.reduce_mean(tf.square(dis_fake - 0.0))
+    # ======= LSGAN 判别器损失（标签平滑：真 0.9 / 假 0.1）=======
+    d_loss_real = tf.reduce_mean(tf.square(dis_real - 0.9))
+    d_loss_fake = tf.reduce_mean(tf.square(dis_fake - 0.1))
     d_loss = 0.5 * (d_loss_real + d_loss_fake)
 
-    # ======= 生成器对抗损失（LSGAN）=======
-    g_loss_gan = tf.reduce_mean(tf.square(dis_fake - 1.0))
+    # ======= 生成器对抗损失（LSGAN，目标逼近 0.9）=======
+    g_loss_gan = tf.reduce_mean(tf.square(dis_fake - 0.9))
 
     # ======= L1 重建损失 =======
     g_loss_l1 = tf.reduce_mean(tf.abs(gen_output - train_label_ph))
