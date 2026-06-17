@@ -153,10 +153,10 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
         d4 = tf.concat([batch_norm(input_=d4, name='g_bn_d4'), e2], 4)
         print("d4 shape:", d4.shape)
 
-        # d5: [None, 16, 16, 8, gf_dim*2*2] → [None, 32, 32, 16, gf_dim], concat e1
+        # d5: [None, 16, 16, 8, gf_dim*2*2] → [None, 32, 32, 16, gf_dim], 不拼接 e1，阻断网格特征泄露
         d5 = deconv3D(input_=tf.nn.relu(d4), output_dim=gf_dim, kernel_size=4, stride=2, name='g_deconv_d5')
         d5 = tf.nn.dropout(d5, current_keep_prob)
-        d5 = tf.concat([batch_norm(input_=d5, name='g_bn_d5'), e1], 4)
+        d5 = batch_norm(input_=d5, name='g_bn_d5')
         print("d5 shape:", d5.shape)
 
         # d_final: [None, 32, 32, 16, gf_dim*2] → [None, 64, 64, 32, 1]

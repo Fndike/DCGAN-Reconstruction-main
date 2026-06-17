@@ -45,6 +45,7 @@ parser.add_argument("--lambda_l1", type=float, default=100.0, help="L1 loss weig
 parser.add_argument("--lambda_gan", type=float, default=1.0, help="GAN loss weight")
 parser.add_argument("--lambda_cos", type=float, default=10.0, help="Cosine similarity loss weight")
 parser.add_argument("--lambda_tv", type=float, default=0.1, help="3D Total Variation loss weight")
+parser.add_argument("--df_dim", type=int, default=32, help="Discriminator feature dimension")
 
 args = parser.parse_args()
 EPS = 1e-12
@@ -250,8 +251,16 @@ def train():
     gen_output = Generator(image_3D=train_data_ph, gf_dim=64, reuse=False, is_training=is_training_ph, name='generator')
     
     print("[INFO] 构建判别器...")
-    dis_real = Discriminator(train_data_ph, train_label_ph, df_dim=64, reuse=False, name='discriminator')
-    dis_fake = Discriminator(train_data_ph, gen_output, df_dim=64, reuse=True, name='discriminator')
+
+    # ======= Instance Noise：训练时对送入判别器的标签添加微弱三维高斯噪声 =======
+    noise_level = 0.05
+    noise_real = tf.random.normal(shape=tf.shape(train_label_ph), mean=0.0, stddev=noise_level)
+    noise_fake = tf.random.normal(shape=tf.shape(gen_output), mean=0.0, stddev=noise_level)
+    train_label_noisy = tf.cond(is_training_ph, lambda: train_label_ph + noise_real, lambda: train_label_ph)
+    gen_output_noisy = tf.cond(is_training_ph, lambda: gen_output + noise_fake, lambda: gen_output)
+
+    dis_real = Discriminator(train_data_ph, train_label_noisy, df_dim=args.df_dim, reuse=False, name='discriminator')
+    dis_fake = Discriminator(train_data_ph, gen_output_noisy, df_dim=args.df_dim, reuse=True, name='discriminator')
     
     print("[INFO] 计算最小二乘对抗损失（带单侧标签平滑）...")
 
@@ -323,7 +332,8 @@ def train():
     
     print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 开始训练...')
 
-    d_loss_val = 1.0  # 历史状态变量，初始化为 1.0 确保 D 参与首轮训练
+    d_loss_val = 1.0    # 历史状态变量：判别器损失
+    g_loss_gan_val = 1.0  # 历史状态变量：生成器对抗损失
 
     for epoch in range(args.epoch):
         data_gen.reset()
@@ -341,15 +351,24 @@ def train():
                 is_training_ph: True
             }
 
-            # 自适应对抗训练：基于上一轮 d_loss_val 决定是否更新 D，单次 sess.run 避免重复前向传播
-            if d_loss_val > 0.05:
-                g_loss_val, d_loss_val, _, _ = sess.run(
-                    [g_loss, d_loss, g_train_op, d_train_op],
+            # ========= 动态双向制动对抗训练控制流 =========
+            if d_loss_val < 0.01 or g_loss_gan_val > 2.0:
+                # 情况 A：D 过强（D_loss 太低）或 G 被压死（G_loss_gan 太高），冻结 D，只更新 G
+                g_loss_val, d_loss_val, g_loss_gan_val, _ = sess.run(
+                    [g_loss, d_loss, g_loss_gan, g_train_op],
+                    feed_dict=feed_dict
+                )
+            elif d_loss_val > 0.4 or g_loss_gan_val < 0.1:
+                # 情况 B：D 太弱被骗（D_loss 太高）或 G 完美欺骗了 D（G_loss_gan 太低），D 多更新一次
+                sess.run(d_train_op, feed_dict=feed_dict)
+                g_loss_val, d_loss_val, g_loss_gan_val, _, _ = sess.run(
+                    [g_loss, d_loss, g_loss_gan, g_train_op, d_train_op],
                     feed_dict=feed_dict
                 )
             else:
-                g_loss_val, d_loss_val, _ = sess.run(
-                    [g_loss, d_loss, g_train_op],
+                # 情况 C：健康对抗状态，标准 1:1 同步更新
+                g_loss_val, d_loss_val, g_loss_gan_val, _, _ = sess.run(
+                    [g_loss, d_loss, g_loss_gan, g_train_op, d_train_op],
                     feed_dict=feed_dict
                 )
 
