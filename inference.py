@@ -43,12 +43,10 @@ def load_test_data(data_path, label_path):
     data = np.load(data_path)['data']
     labels = np.load(label_path)['data']
     
-    if len(data.shape) == 4:
-        data = np.expand_dims(data, axis=-1)
-        data = np.concatenate([data] * 3, axis=-1)
+    # 数据已是 5D (N,64,64,32,2)，无需扩展
+    # 标签是 4D (N,64,64,32)，扩展为 5D (N,64,64,32,1)
     if len(labels.shape) == 4:
         labels = np.expand_dims(labels, axis=-1)
-        labels = np.concatenate([labels] * 3, axis=-1)
     
     return data, labels
 
@@ -78,7 +76,7 @@ def visualize_result(profile, label, generated, output_path):
     label_3d = to_3d(label)
     generated_3d = to_3d(generated)
 
-    x_slice, y_slice, z_slice = 32, 32, 24
+    x_slice, y_slice, z_slice = 24, 24, 16
 
     profile_slices = [
         profile_3d[x_slice, :, :],
@@ -100,9 +98,9 @@ def visualize_result(profile, label, generated, output_path):
 
     all_slices = [profile_slices, label_slices, generated_slices]
     all_titles = [
-        ["Profile X=32 Slice", "Profile Y=32 Slice", "Profile Z=24 Slice"],
-        ["Label X=32 Slice", "Label Y=32 Slice", "Label Z=24 Slice"],
-        ["Generated X=32 Slice", "Generated Y=32 Slice", "Generated Z=24 Slice"],
+        ["Profile X=24 Slice", "Profile Y=24 Slice", "Profile Z=16 Slice"],
+        ["Label X=24 Slice", "Label Y=24 Slice", "Label Z=16 Slice"],
+        ["Generated X=24 Slice", "Generated Y=24 Slice", "Generated Z=16 Slice"],
     ]
 
     for r in range(3):
@@ -126,7 +124,7 @@ def inference():
     
     test_data_ph = tf.placeholder(
         tf.float32, 
-        shape=[None, args.image_size, args.image_size, args.image_size_z, 3],
+        shape=[None, args.image_size, args.image_size, args.image_size_z, 2],
         name='test_data'
     )
     

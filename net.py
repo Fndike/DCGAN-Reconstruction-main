@@ -159,8 +159,8 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
         d5 = tf.concat([batch_norm(input_=d5, name='g_bn_d5'), e1], 4)
         print("d5 shape:", d5.shape)
 
-        # d_final: [None, 32, 32, 16, gf_dim*2] → [None, 64, 64, 32, input_dim]
-        d_final = deconv3D(input_=tf.nn.relu(d5),output_dim=input_dim,kernel_size=4,stride=2,name='g_deconv_d6')
+        # d_final: [None, 32, 32, 16, gf_dim*2] → [None, 64, 64, 32, 1]
+        d_final = deconv3D(input_=tf.nn.relu(d5),output_dim=1,kernel_size=4,stride=2,name='g_deconv_d6')
         print("d_final shape:", d_final.shape)
         return tf.nn.tanh(d_final)
 

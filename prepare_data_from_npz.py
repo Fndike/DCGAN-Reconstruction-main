@@ -78,17 +78,19 @@ def extract_profiles_normalized(cube_3d, unique_vals, K):
     profile_raw[:, :, 24] = cube_3d[:, :, 24]
     
     # 只对非填充位置做阶梯归一化，填充位置保持 0.0
-    mask = profile_raw != FILL_VALUE
+    mask = (profile_raw != FILL_VALUE).astype(np.float32)
     profile_norm = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
     
     if K > 1 and mask.any():
-        raw_values = profile_raw[mask]
+        raw_values = profile_raw[mask.astype(bool)]
         ids = np.searchsorted(unique_vals, raw_values).astype(np.float32)
-        profile_norm[mask] = (ids / (K - 1)) * 2.0 - 1.0
+        profile_norm[mask.astype(bool)] = (ids / (K - 1)) * 2.0 - 1.0
     elif K == 1 and mask.any():
-        profile_norm[mask] = 0.0
+        profile_norm[mask.astype(bool)] = 0.0
     
-    return profile_norm
+    # 合并为双通道：通道0=数据，通道1=掩码
+    profile_dual = np.stack([profile_norm, mask], axis=-1)
+    return profile_dual
 
 
 def save_batch(data_list, label_list, output_dir, prefix, batch_idx):

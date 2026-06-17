@@ -82,12 +82,10 @@ def load_batch_data(data_path, label_path):
     data = np.load(data_path)['data']
     labels = np.load(label_path)['data']
     
-    if len(data.shape) == 4:
-        data = np.expand_dims(data, axis=-1)
-        data = np.concatenate([data] * 3, axis=-1)
+    # 数据已是 5D (N,64,64,32,2)，无需扩展
+    # 标签是 4D (N,64,64,32)，扩展为 5D (N,64,64,32,1)
     if len(labels.shape) == 4:
         labels = np.expand_dims(labels, axis=-1)
-        labels = np.concatenate([labels] * 3, axis=-1)
     
     return data, labels
 
@@ -179,32 +177,32 @@ def save_visual_comparison(profile, label, generated, output_dir, step):
     label   = (label[..., 0]   + 1.0) / 2.0
     gen     = (generated[..., 0] + 1.0) / 2.0
 
-    vis_z = 24
-    vis_y = 32
-    vis_x = 32
+    vis_z = 16
+    vis_y = 24
+    vis_x = 24
 
     fig, axes = plt.subplots(3, 3, figsize=(15, 12))
 
     axes[0, 0].imshow(profile[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 0].set_title("Profile Z=24")
+    axes[0, 0].set_title("Profile Z=16")
     axes[0, 1].imshow(label[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 1].set_title("Label Z=24")
+    axes[0, 1].set_title("Label Z=16")
     axes[0, 2].imshow(gen[:, :, vis_z], cmap='jet', vmin=0, vmax=1)
-    axes[0, 2].set_title("Generated Z=24")
+    axes[0, 2].set_title("Generated Z=16")
 
     axes[1, 0].imshow(profile[:, vis_y, :], cmap='jet', vmin=0, vmax=1)
-    axes[1, 0].set_title("Profile Y=32")
+    axes[1, 0].set_title("Profile Y=24")
     axes[1, 1].imshow(label[:, vis_y, :], cmap='jet', vmin=0, vmax=1)
-    axes[1, 1].set_title("Label Y=32")
+    axes[1, 1].set_title("Label Y=24")
     axes[1, 2].imshow(gen[:, vis_y, :], cmap='jet', vmin=0, vmax=1)
-    axes[1, 2].set_title("Generated Y=32")
+    axes[1, 2].set_title("Generated Y=24")
 
     axes[2, 0].imshow(profile[vis_x, :, :], cmap='jet', vmin=0, vmax=1)
-    axes[2, 0].set_title("Profile X=32")
+    axes[2, 0].set_title("Profile X=24")
     axes[2, 1].imshow(label[vis_x, :, :], cmap='jet', vmin=0, vmax=1)
-    axes[2, 1].set_title("Label X=32")
+    axes[2, 1].set_title("Label X=24")
     axes[2, 2].imshow(gen[vis_x, :, :], cmap='jet', vmin=0, vmax=1)
-    axes[2, 2].set_title("Generated X=32")
+    axes[2, 2].set_title("Generated X=24")
 
     plt.tight_layout()
     out_path = os.path.join(output_dir, f"vis_step_{step:06d}.png")
@@ -236,12 +234,12 @@ def train():
     
     train_data_ph = tf.placeholder(
         tf.float32, 
-        shape=[None, args.image_size, args.image_size, args.image_size_z, 3],
+        shape=[None, args.image_size, args.image_size, args.image_size_z, 2],
         name='train_data'
     )
     train_label_ph = tf.placeholder(
         tf.float32, 
-        shape=[None, args.image_size, args.image_size, args.image_size_z, 3],
+        shape=[None, args.image_size, args.image_size, args.image_size_z, 1],
         name='train_label'
     )
 
