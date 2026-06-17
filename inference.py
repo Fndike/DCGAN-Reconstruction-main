@@ -79,9 +79,9 @@ def visualize_result(profile, label, generated, output_path):
     x_slice, y_slice, z_slice = 24, 24, 16
 
     profile_slices = [
-        profile_3d[x_slice, :, :],
-        profile_3d[:, y_slice, :],
-        profile_3d[:, :, z_slice],
+        profile_3d[x_slice, :, :, 0],
+        profile_3d[:, y_slice, :, 0],
+        profile_3d[:, :, z_slice, 0],
     ]
     label_slices = [
         label_3d[x_slice, :, :],
@@ -105,7 +105,7 @@ def visualize_result(profile, label, generated, output_path):
 
     for r in range(3):
         for c in range(3):
-            axes[r, c].imshow(all_slices[r][c], cmap='jet')
+            axes[r, c].imshow(all_slices[r][c], cmap='jet', vmin=-1.0, vmax=1.0)
             axes[r, c].set_title(all_titles[r][c])
             axes[r, c].axis('off')
 

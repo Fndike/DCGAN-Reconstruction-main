@@ -24,7 +24,7 @@ parser.add_argument("--batch_save_size", type=int, default=500, help="Number of 
 args = parser.parse_args()
 np.random.seed(1234)
 
-FILL_VALUE = 0.0
+FILL_VALUE = -2.0
 
 
 def normalize_staircase(cube_3d):
@@ -64,7 +64,7 @@ def extract_profiles_normalized(cube_3d, unique_vals, K):
     非剖面位置填充 0.0，剖面位置使用与 label 相同的阶梯归一化
     """
     profile_raw = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
-    
+
     # X轴切片（3张）：Fence 测线网格索引 16, 32, 48
     profile_raw[16, :, :] = cube_3d[16, :, :]
     profile_raw[32, :, :] = cube_3d[32, :, :]
@@ -76,19 +76,20 @@ def extract_profiles_normalized(cube_3d, unique_vals, K):
     # Z轴切片（2张）：Fence 测线网格索引 8, 24
     profile_raw[:, :, 8] = cube_3d[:, :, 8]
     profile_raw[:, :, 24] = cube_3d[:, :, 24]
-    
-    # 只对非填充位置做阶梯归一化，填充位置保持 0.0
+
+    # 二值掩码：剖面位置为1.0，未知盲区为0.0
     mask = (profile_raw != FILL_VALUE).astype(np.float32)
+    # 数据通道：盲区保持 FILL_VALUE（-2.0），剖面位置存放归一化阶梯值
     profile_norm = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
-    
+
     if K > 1 and mask.any():
         raw_values = profile_raw[mask.astype(bool)]
         ids = np.searchsorted(unique_vals, raw_values).astype(np.float32)
         profile_norm[mask.astype(bool)] = (ids / (K - 1)) * 2.0 - 1.0
     elif K == 1 and mask.any():
         profile_norm[mask.astype(bool)] = 0.0
-    
-    # 合并为双通道：通道0=数据，通道1=掩码
+
+    # 合并为双通道：[数据通道, 掩码通道]
     profile_dual = np.stack([profile_norm, mask], axis=-1)
     return profile_dual
 
@@ -157,7 +158,7 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
             saved_patches += 1
             K_list.append(K)
             label_std_list.append(np.std(cube_norm))
-            profile_filled_ratio = np.count_nonzero(profile_norm != FILL_VALUE) / profile_norm.size
+            profile_filled_ratio = np.count_nonzero(mask) / mask.size
             profile_filled_ratio_list.append(profile_filled_ratio)
             
             if np.random.random() < train_ratio:
