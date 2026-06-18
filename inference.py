@@ -51,6 +51,89 @@ def load_test_data(data_path, label_path):
     return data, labels
 
 
+def extract_class_centroids(label, mask=None, tol=1e-5):
+    """
+    从标签中提取离散类的归一化代表值（类别中心）。
+    用于将生成器连续输出最近邻离散化到真实类别空间。
+
+    Args:
+        label: 4D/5D 真实标签数组，最后一维通常为 1。
+        mask: 可选，限制提取范围。
+        tol: 合并相近值的阈值。
+
+    Returns:
+        centroids: 升序排列的类别中心数组。
+    """
+    label = np.squeeze(label)
+    if mask is not None:
+        mask = np.squeeze(mask)
+        values = label[mask > 0].reshape(-1)
+    else:
+        values = label.reshape(-1)
+
+    values = np.sort(np.unique(values))
+    if len(values) == 0:
+        return np.array([])
+
+    centroids = [values[0]]
+    for v in values[1:]:
+        if v - centroids[-1] > tol:
+            centroids.append(v)
+        else:
+            centroids[-1] = (centroids[-1] + v) / 2.0
+    return np.array(centroids)
+
+
+def nearest_discretize(values, centroids):
+    """
+    最近邻离散化：将连续值映射到最近的类别中心索引。
+
+    Args:
+        values: 待离散化的连续数组。
+        centroids: 类别中心数组。
+
+    Returns:
+        与 values 同形的离散类别索引数组。
+    """
+    values = np.squeeze(values)
+    flat = values.reshape(-1, 1)
+    dists = np.abs(flat - centroids.reshape(1, -1))
+    labels = np.argmin(dists, axis=1).reshape(values.shape)
+    return labels
+
+
+def compute_metrics(generated, label, mask):
+    """Fence Hard-MSE / 纯盲区 L1 / 纯盲区多分类 mean-IoU"""
+    gen, lbl, msk = np.squeeze(generated), np.squeeze(label), np.squeeze(mask)
+    fence = (msk >= 0.5); blind = (msk < 0.5)
+
+    # 1. 计算已知测线硬约束误差
+    fence_mse = float(np.mean((gen[fence] - lbl[fence])**2)) if np.any(fence) else np.nan
+
+    # 2. 计算纯盲区数值误差
+    blind_l1  = float(np.mean(np.abs(gen[blind] - lbl[blind]))) if np.any(blind) else np.nan
+
+    # 3. 计算纯盲区地层拓扑交并比 (mIoU)
+    centroids = extract_class_centroids(lbl)
+    if centroids is not None and np.any(blind):
+        pred_labels = nearest_discretize(gen, centroids)
+        true_labels = nearest_discretize(lbl, centroids)
+
+        # 【核心修正】：强制将数据锁死在纯盲区的一维集合内
+        pred_blind = pred_labels[blind]
+        true_blind = true_labels[blind]
+
+        ious = [np.logical_and(pred_blind==c, true_blind==c).sum() /
+                np.logical_or(pred_blind==c, true_blind==c).sum()
+                for c in range(len(centroids))
+                if np.logical_or(pred_blind==c, true_blind==c).sum() > 0]
+        blind_miou = float(np.mean(ious)) if ious else np.nan
+    else:
+        blind_miou = np.nan
+
+    return fence_mse, blind_l1, blind_miou
+
+
 def save_result(profile, label, generated, output_path):
     """保存生成结果"""
     profile = (profile + 1) / 2 * 255
@@ -79,9 +162,9 @@ def visualize_result(profile, label, generated, output_path):
     x_slice, y_slice, z_slice = 24, 24, 16
 
     profile_slices = [
-        profile_3d[x_slice, :, :, 0],
-        profile_3d[:, y_slice, :, 0],
-        profile_3d[:, :, z_slice, 0],
+        profile_3d[x_slice, :, :],
+        profile_3d[:, y_slice, :],
+        profile_3d[:, :, z_slice],
     ]
     label_slices = [
         label_3d[x_slice, :, :],
@@ -149,37 +232,58 @@ def inference():
     print(f"[INFO] 开始推理...")
     
     sample_idx = 0
-    
+    all_fence_mse = []
+    all_blind_l1 = []
+    all_blind_miou = []
+
     for data_path, label_path in test_file_pairs:
         print(f"[INFO] 处理: {os.path.basename(data_path)}")
-        
+
         test_data, test_labels = load_test_data(data_path, label_path)
         num_samples = test_data.shape[0]
-        
+
         for i in range(0, num_samples, args.batch_size):
             batch_data = test_data[i:i+args.batch_size]
             batch_labels = test_labels[i:i+args.batch_size]
-            
+
             gen_val = sess.run(gen_output, feed_dict={test_data_ph: batch_data})
 
             for j in range(len(batch_data)):
-                raw_gen = gen_val[j]  # 形状: [64, 64, 32, 3]
+                raw_gen = gen_val[j]  # 形状: [64, 64, 32, 1]
 
                 # 直接对连续 [-1,1] 空间特征矩阵进行 3D 中值滤波
                 # size=(3,3,3,1): 空间维度平滑，通道维度不滤波
                 filtered_gen = median_filter(raw_gen, size=(3, 3, 3, 1))
+
+                # 利用 Mask 通道解耦空间并计算量化指标
+                fence_mse, blind_l1, blind_miou = compute_metrics(
+                    filtered_gen,
+                    batch_labels[j],
+                    batch_data[j, ..., 1]
+                )
+                print(f"[METRICS] sample {sample_idx:04d}: "
+                      f"Fence Hard-MSE={fence_mse:.6f}, "
+                      f"Blind L1={blind_l1:.6f}, "
+                      f"Blind mean-IoU={blind_miou:.6f}")
+                all_fence_mse.append(fence_mse)
+                all_blind_l1.append(blind_l1)
+                all_blind_miou.append(blind_miou)
 
                 output_path = os.path.join(args.output_dir, f'result_{sample_idx:04d}.npz')
                 save_result(batch_data[j], batch_labels[j], filtered_gen, output_path)
 
                 vis_path = os.path.join(args.output_dir, f'result_{sample_idx:04d}.png')
                 visualize_result(batch_data[j], batch_labels[j], filtered_gen, vis_path)
-                
+
                 sample_idx += 1
-        
+
         print(f"[INFO] 已处理 {sample_idx} 个样本")
-    
+
     print(f"[INFO] 推理完成! 结果保存在: {args.output_dir}")
+    if all_fence_mse:
+        print(f"[SUMMARY] 平均 Fence Hard-MSE: {np.nanmean(all_fence_mse):.6f}")
+        print(f"[SUMMARY] 平均 Blind L1:       {np.nanmean(all_blind_l1):.6f}")
+        print(f"[SUMMARY] 平均 Blind mean-IoU: {np.nanmean(all_blind_miou):.6f}")
     
     sess.close()
 

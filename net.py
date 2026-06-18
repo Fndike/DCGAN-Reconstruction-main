@@ -89,6 +89,43 @@ def batch_norm(input_,name = 'batch_norm'):
 def lrelu(x,leak = 0.2,name = 'relu'):
     return tf.maximum(x,leak * x)  #relu函数本质上就是一个取大值的函数
 
+
+def spectral_norm(weight, name="spectral_norm", n_iters=1):
+    """对卷积核做谱归一化，使用幂迭代近似谱范数。
+    weight shape: [k,k,k,in_ch,out_ch]
+    返回归一化后的 weight / sigma。
+    """
+    with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
+        w_shape = weight.shape.as_list()
+        w_mat = tf.reshape(weight, [-1, w_shape[-1]])  # [k*k*k*in_ch, out_ch]
+        u_var = tf.get_variable(
+            "u",
+            shape=[1, w_shape[-1]],
+            initializer=tf.truncated_normal_initializer(),
+            trainable=False
+        )
+        u = u_var
+        for _ in range(n_iters):
+            v = tf.nn.l2_normalize(tf.matmul(u, tf.transpose(w_mat)), axis=None)
+            u = tf.nn.l2_normalize(tf.matmul(v, w_mat), axis=None)
+        sigma = tf.matmul(tf.matmul(v, w_mat), tf.transpose(u))[0, 0]
+        w_sn = weight / sigma
+        return w_sn
+
+
+def conv3D_sn(input_, output_dim, kernel_size, stride, padding="SAME", name="conv3d_sn", biased=False):
+    """带谱归一化的 3D 卷积（无 batch norm）。"""
+    input_dim = input_.get_shape()[-1]
+    with tf.variable_scope(name):
+        kernel = make_var(name='weights', shape=[kernel_size, kernel_size, kernel_size, input_dim, output_dim])
+        kernel_sn = spectral_norm(kernel, name='sn')
+        output = tf.nn.conv3d(input_, kernel_sn, [1, stride, stride, stride, 1], padding=padding)
+        if biased:
+            biases = make_var(name='biases', shape=[output_dim])
+            output = tf.nn.bias_add(output, biases)
+    return output
+
+
 '''
 进行生成器的输出（128的数据两层卷积的U-Net）
 '''
@@ -159,11 +196,10 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
         d5 = batch_norm(input_=d5, name='g_bn_d5')
         print("d5 shape:", d5.shape)
 
-        # d_final: [None, 32, 32, 16, gf_dim*2] → [None, 64, 64, 32, 1]
+        # d_final: [None, 32, 32, 16, gf_dim] → [None, 64, 64, 32, 1]
         d_final = deconv3D(input_=tf.nn.relu(d5),output_dim=1,kernel_size=4,stride=2,name='g_deconv_d6')
         print("d_final shape:", d_final.shape)
         return tf.nn.tanh(d_final)
-
 
 
 
@@ -185,49 +221,21 @@ def Discriminator(image_3D,targets,df_dim = 64,reuse = False,name = 'discriminat
         print("判别器第一层网络结束后的维度",dis0)
         #第2层卷积
 
-        dis1 = lrelu(batch_norm(conv3D(input_=dis0,output_dim=df_dim*2,kernel_size=4,stride=2,name='dis_conv_1'),name='dis_bn_1'))
+        dis1 = lrelu(conv3D_sn(input_=dis0,output_dim=df_dim*2,kernel_size=4,stride=2,name='dis_conv_1'))
         print("判别器第二层网络后的维度", dis1)
         #第3层卷积
 
-        dis2 = lrelu(batch_norm(conv3D(input_=dis1,output_dim=df_dim*4,kernel_size=4,stride=2,name='dis_conv_2'),name='dis_bn_2'))
+        dis2 = lrelu(conv3D_sn(input_=dis1,output_dim=df_dim*4,kernel_size=4,stride=2,name='dis_conv_2'))
         print("第三层网络结束后的维度",dis2)
         #第4层卷积
 
-        dis3 = lrelu(batch_norm(conv3D(input_=dis2,output_dim=df_dim*4,kernel_size=4,stride=2,name='dis_conv_3'),name='dis_bn_3'))
+        dis3 = lrelu(conv3D_sn(input_=dis2,output_dim=df_dim*4,kernel_size=4,stride=2,name='dis_conv_3'))
         print("第三层网络结束后的维度",dis3)
         #最终层卷积
 
-        dis_output = conv3D(input_=dis3,output_dim=1,kernel_size=4,stride=1,name='dis_conv_output')
+        dis_output = conv3D_sn(input_=dis3,output_dim=1,kernel_size=4,stride=1,name='dis_conv_output')
         print("最终层网络结束后的维度",dis_output)
         #经过sigmoid层进行运算，作用为进行二分类运算，输出的结果为分类的结果
         dis_output = tf.sigmoid(dis_output)
         print("最终结果",dis_output)
         return dis_output
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

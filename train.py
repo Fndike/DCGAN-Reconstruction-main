@@ -250,10 +250,23 @@ def train():
     print("[INFO] 构建生成器...")
     gen_output = Generator(image_3D=train_data_ph, gf_dim=64, reuse=False, is_training=is_training_ph, name='generator')
     
+    # ======= 全局步数变量（用于噪声退火、日志、保存）=======
+    global_step_var = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int32)
+    increment_global_step = tf.assign_add(global_step_var, 1)
+
     print("[INFO] 构建判别器...")
 
     # ======= Instance Noise：训练时对送入判别器的标签添加微弱三维高斯噪声 =======
-    noise_level = 0.05
+    # 动态噪声退火：0-50k步维持0.05；50k-150k步线性衰减至0；150k步后锁定为0
+    noise_level = tf.cond(
+        global_step_var < 50000,
+        lambda: 0.05,
+        lambda: tf.cond(
+            global_step_var < 150000,
+            lambda: 0.05 * tf.cast(150000 - global_step_var, tf.float32) / 100000.0,
+            lambda: 0.0
+        )
+    )
     noise_real = tf.random.normal(shape=tf.shape(train_label_ph), mean=0.0, stddev=noise_level)
     noise_fake = tf.random.normal(shape=tf.shape(gen_output), mean=0.0, stddev=noise_level)
     train_label_noisy = tf.cond(is_training_ph, lambda: train_label_ph + noise_real, lambda: train_label_ph)
@@ -322,6 +335,7 @@ def train():
     if ckpt and ckpt.model_checkpoint_path:
         saver.restore(sess, ckpt.model_checkpoint_path)
         global_step = int(os.path.basename(ckpt.model_checkpoint_path).split('-')[-1])
+        sess.run(global_step_var.assign(global_step))
         print(f'{datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} [INFO] 从 {ckpt.model_checkpoint_path} 恢复模型成功，已训练 {global_step} 步')
     else:
         sess.run(tf.global_variables_initializer())
@@ -340,6 +354,7 @@ def train():
 
         for step in range(steps_per_epoch):
             global_step += 1
+            sess.run(increment_global_step)
 
             batch_data, batch_labels = data_gen.get_batch()
             if batch_data is None:
