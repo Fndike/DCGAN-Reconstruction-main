@@ -131,6 +131,7 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
     total_train_samples = 0
     total_test_samples = 0
     total_samples = 0
+    filtered_samples = 0
     saved_patches = 0
     K_list = []
     label_std_list = []
@@ -148,7 +149,14 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
         for i in range(raw.shape[0]):
             cube_3d = raw[i]  # (64, 64, 32)
             total_samples += 1
-            
+
+            # 极简纯离散地层过滤器：只保留 K ∈ [5, 16] 的无渐变纯断块模型
+            unique_vals_raw = np.unique(cube_3d)
+            K_raw = len(unique_vals_raw)
+            if K_raw > 16 or K_raw < 5:
+                filtered_samples += 1
+                continue  # 无条件剔除：渐变场（>16）或退化样本（<5）
+
             # 阶梯归一化
             cube_norm, unique_vals, K = normalize_staircase(cube_3d)
             
@@ -202,8 +210,11 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
         print(f"[INFO] 保存最后测试批次 {test_batch_idx}: {saved} 样本")
     
     # 统计信息
+    pass_rate = (1 - filtered_samples / total_samples) * 100 if total_samples > 0 else 0
     print(f"\n{'='*50}")
     print(f"total samples processed: {total_samples}")
+    print(f"filtered out (K<5 or K>16): {filtered_samples} ({filtered_samples/total_samples*100:.1f}%)")
+    print(f"passed filter: {total_samples - filtered_samples} ({pass_rate:.1f}%)")
     print(f"saved patches: {saved_patches}")
     if K_list:
         k = np.array(K_list)

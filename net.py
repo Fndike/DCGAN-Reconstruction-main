@@ -133,7 +133,10 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
     input_dim = int(image_3D.get_shape()[-1])
 
     # 如果外部没有传占位符，默认创建一个默认行为
-    if is_training is None:
+    # 如果传入的是 Python bool（如 inference 传 False），自动转为 tf.constant
+    if isinstance(is_training, bool):
+        is_training = tf.constant(is_training, dtype=tf.bool)
+    elif is_training is None:
         is_training = tf.placeholder_with_default(True, shape=(), name='is_training_default')
 
     with tf.variable_scope(name):
