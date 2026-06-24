@@ -199,9 +199,15 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
         d5 = batch_norm(input_=d5, name='g_bn_d5')
         print("d5 shape:", d5.shape)
 
-        # d_final: [None, 32, 32, 16, gf_dim] → [None, 64, 64, 32, 1]
-        d_final = deconv3D(input_=tf.nn.relu(d5),output_dim=1,kernel_size=4,stride=2,name='g_deconv_d6')
+        # 【修改后】：d_final 拆分为两步
+        # 第一步：用 deconv3D 撑开分辨率，并保留足够的特征厚度 (gf_dim // 2)，保证边界锐利度
+        d_up = deconv3D(input_=tf.nn.relu(d5), output_dim=gf_dim // 2, kernel_size=4, stride=2, name='g_deconv_d6_up')
+        print("d_up shape:", d_up.shape)
+
+        # 第二步：接入 stride=1 的标准卷积作为"熨斗"，抹平反卷积网格噪点，压缩到 1 通道
+        d_final = conv3D(input_=lrelu(d_up), output_dim=1, kernel_size=3, stride=1, name='g_smooth_d6')
         print("d_final shape:", d_final.shape)
+
         return tf.nn.tanh(d_final)
 
 
