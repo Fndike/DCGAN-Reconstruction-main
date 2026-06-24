@@ -285,8 +285,11 @@ def train():
     # ======= 生成器对抗损失（LSGAN，目标逼近 0.9）=======
     g_loss_gan = tf.reduce_mean(tf.square(dis_fake - 0.9))
 
-    # ======= L1 重建损失 =======
-    g_loss_l1 = tf.reduce_mean(tf.abs(gen_output - train_label_ph))
+    # ======= 掩码加权 L1 软约束 =======
+    mask = tf.expand_dims(train_data_ph[..., 1], axis=-1)
+    l1_base = tf.reduce_mean(tf.abs(gen_output - train_label_ph))
+    l1_hard_area = tf.reduce_mean(tf.abs((gen_output - train_label_ph) * mask))
+    g_loss_l1 = l1_base + 20.0 * l1_hard_area
 
     # ======= 余弦相似度联合损失 L_cos =======
     dot_product = tf.reduce_sum(gen_output * train_label_ph, axis=[1, 2, 3, 4])

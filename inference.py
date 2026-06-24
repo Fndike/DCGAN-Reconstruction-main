@@ -251,8 +251,7 @@ def inference():
             for j in range(len(batch_data)):
                 raw_gen = gen_val[j]  # 形状: [64, 64, 32, 1]
 
-                # 直接对连续 [-1,1] 空间特征矩阵进行 3D 中值滤波
-                # size=(3,3,3,1): 空间维度平滑，通道维度不滤波
+                # 对网络的原始输出做 3D 中值滤波
                 filtered_gen = median_filter(raw_gen, size=(3, 3, 3, 1))
 
                 # 利用 Mask 通道解耦空间并计算量化指标

@@ -19,3 +19,5 @@
 /OwnData
 /一些参考.md
 /train_log.txt
+/__pycache__
+/.gitignore

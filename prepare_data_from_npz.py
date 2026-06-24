@@ -166,7 +166,9 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
             saved_patches += 1
             K_list.append(K)
             label_std_list.append(np.std(cube_norm))
-            profile_filled_ratio = np.count_nonzero(mask) / mask.size
+            # mask 通道是双通道 profile_norm 的第二维
+            profile_mask = profile_norm[..., 1]
+            profile_filled_ratio = np.count_nonzero(profile_mask) / profile_mask.size
             profile_filled_ratio_list.append(profile_filled_ratio)
             
             if np.random.random() < train_ratio:
