@@ -174,9 +174,18 @@ def save_visual_comparison(profile, label, generated, output_dir, step):
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
 
-    profile = (profile[..., 0] + 1.0) / 2.0
-    label   = (label[..., 0]   + 1.0) / 2.0
-    gen     = (generated[..., 0] + 1.0) / 2.0
+    # profile / label / generated 原始范围都是 [-1, 1]，与训练数据归一化空间一致
+    profile = profile[..., 0]
+    label   = label[..., 0]
+    gen_raw = generated[..., 0]
+
+    # ======= 16 阶梯最近邻吸附：让训练可视化也呈现干净色块（仅 numpy，不进计算图）=======
+    global_steps = np.linspace(-1.0, 1.0, 16).astype(np.float32)
+    idx = np.argmin(
+        np.abs(gen_raw[..., np.newaxis] - global_steps[np.newaxis, np.newaxis, np.newaxis, :]),
+        axis=-1
+    )
+    gen = global_steps[idx]  # 与训练数据完全对齐的 16 阶梯
 
     vis_z = 16
     vis_y = 24
@@ -184,25 +193,28 @@ def save_visual_comparison(profile, label, generated, output_dir, step):
 
     fig, axes = plt.subplots(3, 3, figsize=(15, 12))
 
-    axes[0, 0].imshow(profile[:, :, vis_z], cmap='jet', vmin=-1.0, vmax=1.0)
+    # 统一 vmin/vmax 到 [-1, 1]，profile/label 和 generated 共用同一套刻度
+    VMIN, VMAX = -1.0, 1.0
+
+    axes[0, 0].imshow(profile[:, :, vis_z], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[0, 0].set_title("Profile Z=16")
-    axes[0, 1].imshow(label[:, :, vis_z], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[0, 1].imshow(label[:, :, vis_z], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[0, 1].set_title("Label Z=16")
-    axes[0, 2].imshow(gen[:, :, vis_z], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[0, 2].imshow(gen[:, :, vis_z], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[0, 2].set_title("Generated Z=16")
 
-    axes[1, 0].imshow(profile[:, vis_y, :], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[1, 0].imshow(profile[:, vis_y, :], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[1, 0].set_title("Profile Y=24")
-    axes[1, 1].imshow(label[:, vis_y, :], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[1, 1].imshow(label[:, vis_y, :], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[1, 1].set_title("Label Y=24")
-    axes[1, 2].imshow(gen[:, vis_y, :], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[1, 2].imshow(gen[:, vis_y, :], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[1, 2].set_title("Generated Y=24")
 
-    axes[2, 0].imshow(profile[vis_x, :, :], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[2, 0].imshow(profile[vis_x, :, :], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[2, 0].set_title("Profile X=24")
-    axes[2, 1].imshow(label[vis_x, :, :], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[2, 1].imshow(label[vis_x, :, :], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[2, 1].set_title("Label X=24")
-    axes[2, 2].imshow(gen[vis_x, :, :], cmap='jet', vmin=-1.0, vmax=1.0)
+    axes[2, 2].imshow(gen[vis_x, :, :], cmap='jet', vmin=VMIN, vmax=VMAX)
     axes[2, 2].set_title("Generated X=24")
 
     plt.tight_layout()

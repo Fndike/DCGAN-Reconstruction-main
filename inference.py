@@ -251,9 +251,17 @@ def inference():
             for j in range(len(batch_data)):
                 raw_gen = gen_val[j]  # 形状: [64, 64, 32, 1]
 
-                # 直接对连续 [-1,1] 空间特征矩阵进行 3D 中值滤波
+                # ======= 16 阶梯最近邻吸附：与训练端 normalize_staircase(max_classes=16) 刻度一致 =======
+                global_steps = np.linspace(-1.0, 1.0, 16).astype(np.float32)
+                idx = np.argmin(
+                    np.abs(raw_gen[..., np.newaxis] - global_steps[np.newaxis, np.newaxis, np.newaxis, np.newaxis, :]),
+                    axis=-1
+                )
+                snapped_gen = global_steps[idx]  # 形状: [64, 64, 32, 1]
+
+                # 对吸附后的离散阶梯做 3D 中值滤波（消除小斑点，保持色块边界）
                 # size=(3,3,3,1): 空间维度平滑，通道维度不滤波
-                filtered_gen = median_filter(raw_gen, size=(3, 3, 3, 1))
+                filtered_gen = median_filter(snapped_gen, size=(3, 3, 3, 1))
 
                 # 利用 Mask 通道解耦空间并计算量化指标
                 fence_mse, blind_l1, blind_miou = compute_metrics(

@@ -27,41 +27,46 @@ np.random.seed(1234)
 FILL_VALUE = -2.0
 
 
-def normalize_staircase(cube_3d):
+def normalize_staircase(cube_3d, max_classes=16):
     """
-    样本级局部阶梯归一化
-    
-    对每一个独立的 [64, 64, 32] 模型：
-    1. 获取所有独特电阻率值，从小到大排序
-    2. 动态映射为 0 至 K-1 的连续阶梯整型 ID
-    3. 归一化到 [-1, 1]: X_norm = (X_id / (K-1)) * 2.0 - 1.0
-    
-    返回: (归一化矩阵, 排序后的独特值数组, 类别数K)
+    全库绝对物理标度对齐：
+    不管样本实际有几层，先 KMeans 聚类到固定的 max_classes 类，
+    再按 max_classes 个均匀阶梯映射到 [-1, 1]。
+    整个数据集中所有样本共享相同的 16 把尺子刻度。
+
+    返回: (归一化矩阵, 排序后的独特值数组, 实际类别数 K)
     """
-    unique_vals = np.sort(np.unique(cube_3d))
-    K = len(unique_vals)
-    
-    # 使用 searchsorted 将原始值映射为阶梯 ID
-    id_map = np.searchsorted(unique_vals, cube_3d).astype(np.float32)
-    
-    if K <= 1:
-        cube_norm = np.zeros_like(cube_3d, dtype=np.float32)
+    flat = cube_3d.reshape(-1, 1)
+    K_local = len(np.unique(cube_3d))
+
+    if K_local <= max_classes:
+        # 类别数 ≤ 16：直接线性映射到 max_classes 阶梯
+        unique_vals = np.sort(np.unique(cube_3d))
+        id_map = np.searchsorted(unique_vals, cube_3d).astype(np.float32)
+        K = K_local
     else:
-        cube_norm = (id_map / (K - 1)) * 2.0 - 1.0
-    
-    return cube_norm, unique_vals, K
+        # 类别数 > 16：用 KMeans 聚类压缩到 max_classes 类
+        from sklearn.cluster import KMeans
+        km = KMeans(n_clusters=max_classes, random_state=42, n_init=10)
+        id_map = km.fit_predict(flat).reshape(cube_3d.shape).astype(np.float32)
+        K = max_classes
+
+    # 【核心】：永远除以固定的 (max_classes - 1)，刻度绝对统一！
+    cube_norm = (id_map / (max_classes - 1)) * 2.0 - 1.0
+    return cube_norm, id_map, K
 
 
-def extract_profiles_normalized(cube_3d, unique_vals, K):
+def extract_profiles_normalized(cube_3d, cube_norm, K):
     """
     从完整三维模型中提取剖面数据并归一化
-    
+
     模型形状: (64, 64, 32)
-    - X轴 (len=64): 切片位置 16, 48
-    - Y轴 (len=64): 切片位置 16, 48
-    - Z轴 (len=32): 切片位置 16 (仅此一处，48会越界)
-    
-    非剖面位置填充 0.0，剖面位置使用与 label 相同的阶梯归一化
+    - X轴 (len=64): 切片位置 16, 32, 48
+    - Y轴 (len=64): 切片位置 16, 32, 48
+    - Z轴 (len=32): 切片位置 8, 24
+
+    非剖面位置填充 FILL_VALUE，剖面位置直接复用 cube_norm 的归一化值。
+    cube_norm 是 normalize_staircase 返回的、与训练空间刻度一致的归一化矩阵。
     """
     profile_raw = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
 
@@ -79,15 +84,9 @@ def extract_profiles_normalized(cube_3d, unique_vals, K):
 
     # 二值掩码：剖面位置为1.0，未知盲区为0.0
     mask = (profile_raw != FILL_VALUE).astype(np.float32)
-    # 数据通道：盲区保持 FILL_VALUE（-2.0），剖面位置存放归一化阶梯值
+    # 数据通道：盲区保持 FILL_VALUE，剖面位置直接用 cube_norm 的归一化值
     profile_norm = np.full(cube_3d.shape, FILL_VALUE, dtype=np.float32)
-
-    if K > 1 and mask.any():
-        raw_values = profile_raw[mask.astype(bool)]
-        ids = np.searchsorted(unique_vals, raw_values).astype(np.float32)
-        profile_norm[mask.astype(bool)] = (ids / (K - 1)) * 2.0 - 1.0
-    elif K == 1 and mask.any():
-        profile_norm[mask.astype(bool)] = 0.0
+    profile_norm[mask > 0.5] = cube_norm[mask > 0.5]
 
     # 合并为双通道：[数据通道, 掩码通道]
     profile_dual = np.stack([profile_norm, mask], axis=-1)
@@ -159,14 +158,14 @@ def process_all_files(input_dir, output_dir, train_ratio=0.8, batch_save_size=50
 
             # 阶梯归一化
             cube_norm, unique_vals, K = normalize_staircase(cube_3d)
-            
-            # 提取剖面
-            profile_norm = extract_profiles_normalized(cube_3d, unique_vals, K)
+
+            # 提取剖面（直接复用 cube_norm 的归一化值，避免重复 searchsorted）
+            profile_norm = extract_profiles_normalized(cube_3d, cube_norm, K)
             
             saved_patches += 1
             K_list.append(K)
             label_std_list.append(np.std(cube_norm))
-            profile_filled_ratio = np.count_nonzero(mask) / mask.size
+            profile_filled_ratio = np.count_nonzero(profile_norm[..., 1]) / profile_norm[..., 1].size
             profile_filled_ratio_list.append(profile_filled_ratio)
             
             if np.random.random() < train_ratio:
