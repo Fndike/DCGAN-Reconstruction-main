@@ -45,6 +45,7 @@ parser.add_argument("--lambda_l1", type=float, default=100.0, help="L1 loss weig
 parser.add_argument("--lambda_gan", type=float, default=1.0, help="GAN loss weight")
 parser.add_argument("--lambda_cos", type=float, default=10.0, help="Cosine similarity loss weight")
 parser.add_argument("--lambda_tv", type=float, default=0.1, help="3D Total Variation loss weight")
+parser.add_argument("--lambda_edge", type=float, default=20.0, help="Boundary-Aware Alignment loss weight")
 parser.add_argument("--df_dim", type=int, default=32, help="Discriminator feature dimension")
 
 args = parser.parse_args()
@@ -284,13 +285,13 @@ def train():
     print("[INFO] 构建判别器...")
 
     # ======= Instance Noise：训练时对送入判别器的标签添加微弱三维高斯噪声 =======
-    # 动态噪声退火：0-50k步维持0.05；50k-150k步线性衰减至0；150k步后锁定为0
+    # 动态噪声退火：0-50k步维持0.15；50k-150k步线性衰减至0；150k步后锁定为0
     noise_level = tf.cond(
         global_step_var < 50000,
-        lambda: 0.05,
+        lambda: 0.15,
         lambda: tf.cond(
             global_step_var < 150000,
-            lambda: 0.05 * tf.cast(150000 - global_step_var, tf.float32) / 100000.0,
+            lambda: 0.15 * tf.cast(150000 - global_step_var, tf.float32) / 100000.0,
             lambda: 0.0
         )
     )
@@ -312,20 +313,20 @@ def train():
     # ======= 生成器对抗损失（LSGAN，目标逼近 0.9）=======
     g_loss_gan = tf.reduce_mean(tf.square(dis_fake - 0.9))
 
-    # ======= L1 重建损失（基于 STE 硬色块）=======
-    g_loss_l1 = tf.reduce_mean(tf.abs(gen_ste - train_label_ph))
+    # ======= L1 重建损失（改用连续值 gen_clipped，修正梯度方向）=======
+    g_loss_l1 = tf.reduce_mean(tf.abs(gen_clipped - train_label_ph))
 
-    # ======= 余弦相似度联合损失 L_cos（基于 STE 硬色块）=======
-    dot_product = tf.reduce_sum(gen_ste * train_label_ph, axis=[1, 2, 3, 4])
-    norm_gen = tf.sqrt(tf.reduce_sum(tf.square(gen_ste), axis=[1, 2, 3, 4]))
+    # ======= 余弦相似度联合损失 L_cos（改用连续值 gen_clipped）=======
+    dot_product = tf.reduce_sum(gen_clipped * train_label_ph, axis=[1, 2, 3, 4])
+    norm_gen = tf.sqrt(tf.reduce_sum(tf.square(gen_clipped), axis=[1, 2, 3, 4]))
     norm_label = tf.sqrt(tf.reduce_sum(tf.square(train_label_ph), axis=[1, 2, 3, 4]))
     cosine_similarity = dot_product / (norm_gen * norm_label + EPS)
     g_loss_cos = tf.reduce_mean(1.0 - cosine_similarity)
 
-    # ======= 3D Total Variation Loss（基于 STE 硬色块）=======
-    tv_x = tf.reduce_mean(tf.abs(gen_ste[:, 1:, :, :, :] - gen_ste[:, :-1, :, :, :]))
-    tv_y = tf.reduce_mean(tf.abs(gen_ste[:, :, 1:, :, :] - gen_ste[:, :, :-1, :, :]))
-    tv_z = tf.reduce_mean(tf.abs(gen_ste[:, :, :, 1:, :] - gen_ste[:, :, :, :-1, :]))
+    # ======= 3D Total Variation Loss（改用连续值 gen_clipped）=======
+    tv_x = tf.reduce_mean(tf.abs(gen_clipped[:, 1:, :, :, :] - gen_clipped[:, :-1, :, :, :]))
+    tv_y = tf.reduce_mean(tf.abs(gen_clipped[:, :, 1:, :, :] - gen_clipped[:, :, :-1, :, :]))
+    tv_z = tf.reduce_mean(tf.abs(gen_clipped[:, :, :, 1:, :] - gen_clipped[:, :, :, :-1, :]))
     g_loss_tv = tv_x + tv_y + tv_z
 
     # ======= 【新增】3D 边界感知对齐损失 (Boundary-Aware Alignment Loss) =======
@@ -342,7 +343,7 @@ def train():
     edge_lbl_z = train_label_ph[:, :, :, 1:, :] - train_label_ph[:, :, :, :-1, :]
     g_loss_edge_z = tf.reduce_mean(tf.abs(edge_gen_z - edge_lbl_z))
 
-    # 三维边界对齐损失总和（权重 20.0）
+    # 三维边界对齐损失总和
     g_loss_edge = g_loss_edge_x + g_loss_edge_y + g_loss_edge_z
 
     # ======= 生成器总损失（融合边界对齐损失）=======
@@ -350,7 +351,7 @@ def train():
               + args.lambda_l1 * g_loss_l1
               + args.lambda_cos * g_loss_cos
               + args.lambda_tv * g_loss_tv
-              + 20.0 * g_loss_edge)
+              + args.lambda_edge * g_loss_edge)
 
     g_loss_sum = tf.summary.scalar('generator_loss', g_loss)
     d_loss_sum = tf.summary.scalar('discriminator_loss', d_loss)
@@ -413,8 +414,9 @@ def train():
             }
 
             # ========= 动态双向制动对抗训练控制流 =========
-            if d_loss_val < 0.01 or g_loss_gan_val > 2.0:
-                # 情况 A：D 过强（D_loss 太低）或 G 被压死（G_loss_gan 太高），冻结 D，只更新 G
+            if d_loss_val < 0.05 or g_loss_gan_val > 1.5:
+                # 情况 A：D 过强（D_loss 太低）或 G 被压死（G_loss_gan 太高），冻结 D，连续更新 G 两次
+                sess.run(g_train_op, feed_dict=feed_dict)
                 g_loss_val, d_loss_val, g_loss_gan_val, _ = sess.run(
                     [g_loss, d_loss, g_loss_gan, g_train_op],
                     feed_dict=feed_dict

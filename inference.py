@@ -297,9 +297,30 @@ def inference():
 
     print(f"[INFO] 推理完成! 结果保存在: {args.output_dir}")
     if all_fence_mse:
-        print(f"[SUMMARY] 平均 Fence Hard-MSE: {np.nanmean(all_fence_mse):.6f}")
-        print(f"[SUMMARY] 平均 Blind L1:       {np.nanmean(all_blind_l1):.6f}")
-        print(f"[SUMMARY] 平均 Blind mean-IoU: {np.nanmean(all_blind_miou):.6f}")
+        avg_fence_mse = np.nanmean(all_fence_mse)
+        avg_blind_l1 = np.nanmean(all_blind_l1)
+        avg_blind_miou = np.nanmean(all_blind_miou)
+
+        print(f"[SUMMARY] 平均 Fence Hard-MSE: {avg_fence_mse:.6f}")
+        print(f"[SUMMARY] 平均 Blind L1:       {avg_blind_l1:.6f}")
+        print(f"[SUMMARY] 平均 Blind mean-IoU: {avg_blind_miou:.6f}")
+
+        # ======= 保存指标到文件 =======
+        metrics_path = os.path.join(args.output_dir, 'metrics_summary.txt')
+        with open(metrics_path, 'w', encoding='utf-8') as f:
+            f.write("=== 推理指标汇总 ===\n")
+            f.write(f"模型路径: {args.model_path}\n")
+            f.write(f"测试数据: {args.test_data_dir}\n")
+            f.write(f"测试样本数: {len(all_fence_mse)}\n\n")
+            f.write(f"平均 Fence Hard-MSE: {avg_fence_mse:.6f}\n")
+            f.write(f"平均 Blind L1:       {avg_blind_l1:.6f}\n")
+            f.write(f"平均 Blind mean-IoU: {avg_blind_miou:.6f}\n\n")
+            f.write("=== 逐样本明细 ===\n")
+            f.write(f"{'Sample':>8s}  {'Fence_MSE':>12s}  {'Blind_L1':>12s}  {'Blind_IoU':>12s}\n")
+            f.write("-" * 52 + "\n")
+            for i in range(len(all_fence_mse)):
+                f.write(f"{i:>8d}  {all_fence_mse[i]:>12.6f}  {all_blind_l1[i]:>12.6f}  {all_blind_miou[i]:>12.6f}\n")
+        print(f"[INFO] 指标已保存至: {metrics_path}")
     
     sess.close()
 
