@@ -261,7 +261,22 @@ def train():
 
     print("[INFO] 构建生成器...")
     gen_output = Generator(image_3D=train_data_ph, gf_dim=64, reuse=False, is_training=is_training_ph, name='generator')
-    
+
+    # ===================================================================
+    # 【物理先验 1 & 2】：动态范围截断 + 直通估计器 (STE) 16 台阶离散吸附
+    # ===================================================================
+    # ---- 1. 动态范围截断：获取当前 batch 真实标签的最大值，封锁生成器输出上限 ----
+    label_max = tf.reduce_max(train_label_ph, axis=[1, 2, 3, 4], keepdims=True)
+    gen_clipped = tf.clip_by_value(gen_output, -1.0, label_max)
+
+    # ---- 2. 直通估计器 (STE)：前向绝对 16 台阶离散吸附，反向梯度无损直通 ----
+    step_size = 2.0 / 15.0  # 16 台阶的标准间隔
+    idx_floor = tf.round((gen_clipped - (-1.0)) / step_size)
+    idx_clipped = tf.clip_by_value(idx_floor, 0.0, 15.0)
+    gen_snapped = -1.0 + idx_clipped * step_size
+    # stop_gradient 实现 STE：前向用离散 gen_snapped，反向用连续 gen_clipped 传梯度
+    gen_ste = gen_clipped + tf.stop_gradient(gen_snapped - gen_clipped)
+
     # ======= 全局步数变量（用于噪声退火、日志、保存）=======
     global_step_var = tf.Variable(0, name='global_step', trainable=False, dtype=tf.int32)
     increment_global_step = tf.assign_add(global_step_var, 1)
@@ -280,9 +295,9 @@ def train():
         )
     )
     noise_real = tf.random.normal(shape=tf.shape(train_label_ph), mean=0.0, stddev=noise_level)
-    noise_fake = tf.random.normal(shape=tf.shape(gen_output), mean=0.0, stddev=noise_level)
+    noise_fake = tf.random.normal(shape=tf.shape(gen_ste), mean=0.0, stddev=noise_level)
     train_label_noisy = tf.cond(is_training_ph, lambda: train_label_ph + noise_real, lambda: train_label_ph)
-    gen_output_noisy = tf.cond(is_training_ph, lambda: gen_output + noise_fake, lambda: gen_output)
+    gen_output_noisy = tf.cond(is_training_ph, lambda: gen_ste + noise_fake, lambda: gen_ste)
 
     dis_real = Discriminator(train_data_ph, train_label_noisy, df_dim=args.df_dim, reuse=False, name='discriminator')
     dis_fake = Discriminator(train_data_ph, gen_output_noisy, df_dim=args.df_dim, reuse=True, name='discriminator')
@@ -297,33 +312,52 @@ def train():
     # ======= 生成器对抗损失（LSGAN，目标逼近 0.9）=======
     g_loss_gan = tf.reduce_mean(tf.square(dis_fake - 0.9))
 
-    # ======= L1 重建损失 =======
-    g_loss_l1 = tf.reduce_mean(tf.abs(gen_output - train_label_ph))
+    # ======= L1 重建损失（基于 STE 硬色块）=======
+    g_loss_l1 = tf.reduce_mean(tf.abs(gen_ste - train_label_ph))
 
-    # ======= 余弦相似度联合损失 L_cos =======
-    dot_product = tf.reduce_sum(gen_output * train_label_ph, axis=[1, 2, 3, 4])
-    norm_gen = tf.sqrt(tf.reduce_sum(tf.square(gen_output), axis=[1, 2, 3, 4]))
+    # ======= 余弦相似度联合损失 L_cos（基于 STE 硬色块）=======
+    dot_product = tf.reduce_sum(gen_ste * train_label_ph, axis=[1, 2, 3, 4])
+    norm_gen = tf.sqrt(tf.reduce_sum(tf.square(gen_ste), axis=[1, 2, 3, 4]))
     norm_label = tf.sqrt(tf.reduce_sum(tf.square(train_label_ph), axis=[1, 2, 3, 4]))
     cosine_similarity = dot_product / (norm_gen * norm_label + EPS)
     g_loss_cos = tf.reduce_mean(1.0 - cosine_similarity)
 
-    # ======= 3D Total Variation Loss =======
-    tv_x = tf.reduce_mean(tf.abs(gen_output[:, 1:, :, :, :] - gen_output[:, :-1, :, :, :]))
-    tv_y = tf.reduce_mean(tf.abs(gen_output[:, :, 1:, :, :] - gen_output[:, :, :-1, :, :]))
-    tv_z = tf.reduce_mean(tf.abs(gen_output[:, :, :, 1:, :] - gen_output[:, :, :, :-1, :]))
+    # ======= 3D Total Variation Loss（基于 STE 硬色块）=======
+    tv_x = tf.reduce_mean(tf.abs(gen_ste[:, 1:, :, :, :] - gen_ste[:, :-1, :, :, :]))
+    tv_y = tf.reduce_mean(tf.abs(gen_ste[:, :, 1:, :, :] - gen_ste[:, :, :-1, :, :]))
+    tv_z = tf.reduce_mean(tf.abs(gen_ste[:, :, :, 1:, :] - gen_ste[:, :, :, :-1, :]))
     g_loss_tv = tv_x + tv_y + tv_z
 
-    # ======= 生成器总损失 =======
+    # ======= 【新增】3D 边界感知对齐损失 (Boundary-Aware Alignment Loss) =======
+    # 三方向边缘提取：生成的边缘 vs 真实标签的边缘
+    edge_gen_x = gen_ste[:, 1:, :, :, :] - gen_ste[:, :-1, :, :, :]
+    edge_lbl_x = train_label_ph[:, 1:, :, :, :] - train_label_ph[:, :-1, :, :, :]
+    g_loss_edge_x = tf.reduce_mean(tf.abs(edge_gen_x - edge_lbl_x))
+
+    edge_gen_y = gen_ste[:, :, 1:, :, :] - gen_ste[:, :, :-1, :, :]
+    edge_lbl_y = train_label_ph[:, :, 1:, :, :] - train_label_ph[:, :, :-1, :, :]
+    g_loss_edge_y = tf.reduce_mean(tf.abs(edge_gen_y - edge_lbl_y))
+
+    edge_gen_z = gen_ste[:, :, :, 1:, :] - gen_ste[:, :, :, :-1, :]
+    edge_lbl_z = train_label_ph[:, :, :, 1:, :] - train_label_ph[:, :, :, :-1, :]
+    g_loss_edge_z = tf.reduce_mean(tf.abs(edge_gen_z - edge_lbl_z))
+
+    # 三维边界对齐损失总和（权重 20.0）
+    g_loss_edge = g_loss_edge_x + g_loss_edge_y + g_loss_edge_z
+
+    # ======= 生成器总损失（融合边界对齐损失）=======
     g_loss = (args.lambda_gan * g_loss_gan
               + args.lambda_l1 * g_loss_l1
               + args.lambda_cos * g_loss_cos
-              + args.lambda_tv * g_loss_tv)
+              + args.lambda_tv * g_loss_tv
+              + 20.0 * g_loss_edge)
 
     g_loss_sum = tf.summary.scalar('generator_loss', g_loss)
     d_loss_sum = tf.summary.scalar('discriminator_loss', d_loss)
     g_loss_l1_sum = tf.summary.scalar('generator_l1_loss', g_loss_l1)
     g_loss_cos_sum = tf.summary.scalar('generator_cos_loss', g_loss_cos)
     g_loss_tv_sum = tf.summary.scalar('generator_tv_loss', g_loss_tv)
+    g_loss_edge_sum = tf.summary.scalar('generator_edge_loss', g_loss_edge)
     
     gen_vars = [v for v in tf.trainable_variables() if 'generator' in v.name]
     dis_vars = [v for v in tf.trainable_variables() if 'discriminator' in v.name]
@@ -400,8 +434,8 @@ def train():
                 )
 
             if global_step % args.summary_pred_every == 0:
-                g_loss_sum_val, d_loss_sum_val, g_l1_sum_val, g_cos_sum_val, g_tv_sum_val = sess.run(
-                    [g_loss_sum, d_loss_sum, g_loss_l1_sum, g_loss_cos_sum, g_loss_tv_sum],
+                g_loss_sum_val, d_loss_sum_val, g_l1_sum_val, g_cos_sum_val, g_tv_sum_val, g_edge_sum_val = sess.run(
+                    [g_loss_sum, d_loss_sum, g_loss_l1_sum, g_loss_cos_sum, g_loss_tv_sum, g_loss_edge_sum],
                     feed_dict=feed_dict
                 )
                 summary_writer.add_summary(g_loss_sum_val, global_step)
@@ -409,11 +443,13 @@ def train():
                 summary_writer.add_summary(g_l1_sum_val, global_step)
                 summary_writer.add_summary(g_cos_sum_val, global_step)
                 summary_writer.add_summary(g_tv_sum_val, global_step)
+                summary_writer.add_summary(g_edge_sum_val, global_step)
             
             if global_step % args.write_pred_every == 0:
-                # 可视化时关闭 Dropout，获取干净输出
-                gen_val = sess.run(gen_output, feed_dict={
+                # 可视化时关闭 Dropout，获取干净输出（使用 STE 离散版 gen_ste）
+                gen_val = sess.run(gen_ste, feed_dict={
                     train_data_ph: batch_data,
+                    train_label_ph: batch_labels,  # 需要 label 计算 gen_ste
                     is_training_ph: False
                 })
                 save_prediction(
