@@ -83,11 +83,33 @@ def batch_norm(input_,name = 'batch_norm'):
         print("各种变量的维度","scale",scale.shape,"offset",offset.shape,"normalized",normalized.shape,"相乘的维度",test.shape,"最终output的维度",output.shape)
         return output
 
+def instance_norm(input_, name='instance_norm'):
+    """3D Instance Normalization：对单个样本的 H,W,D 独立归一化，消除训练/推理统计量不一致"""
+    with tf.variable_scope(name):
+        input_dim = input_.get_shape()[-1]
+        scale = tf.get_variable("scale", [input_dim],
+                                initializer=tf.random_normal_initializer(1.0, 0.02, dtype=tf.float32))
+        offset = tf.get_variable("offset", [input_dim],
+                                 initializer=tf.constant_initializer(0.0))
+        mean, variance = tf.nn.moments(input_, axes=[1, 2, 3], keep_dims=True)
+        epsilon = 1e-5
+        inv = tf.rsqrt(variance + epsilon)
+        normalized = (input_ - mean) * inv
+        return scale * normalized + offset
+
 '''
 激活层：利用leakyrelu函数激活避免梯度爆炸和消失
 '''
 def lrelu(x,leak = 0.2,name = 'relu'):
     return tf.maximum(x,leak * x)  #relu函数本质上就是一个取大值的函数
+
+
+def resize_conv3D(input_, output_dim, kernel_size=3, padding="SAME", name="resize_conv3d"):
+    """最近邻上采样 + stride=1的标准卷积，替代反卷积"""
+    with tf.variable_scope(name):
+        upsampled = tf.keras.layers.UpSampling3D(size=(2, 2, 2))(input_)
+        output = conv3D(upsampled, output_dim, kernel_size, stride=1, padding=padding, name="conv")
+    return output
 
 
 def spectral_norm(weight, name="spectral_norm", n_iters=1):
@@ -147,27 +169,27 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
 
         # 下采样（5层，适配 Z=32 输入）
         # e1: [None, 64, 64, 32, input_dim] → [None, 32, 32, 16, gf_dim]
-        e1 = batch_norm(conv3D(input_=image_3D, output_dim=gf_dim, kernel_size=4, stride=2, name='g_conv_e1'),
+        e1 = instance_norm(conv3D(input_=image_3D, output_dim=gf_dim, kernel_size=4, stride=2, name='g_conv_e1'),
                         name='g_bn_e1')
         print("e1 shape:", e1.shape)
 
         # e2: [None, 32, 32, 16, gf_dim] → [None, 16, 16, 8, gf_dim*2]
-        e2 = batch_norm(conv3D(input_=lrelu(e1), output_dim=gf_dim * 2, kernel_size=4, stride=2, name='g_conv_e2'),
+        e2 = instance_norm(conv3D(input_=lrelu(e1), output_dim=gf_dim * 2, kernel_size=4, stride=2, name='g_conv_e2'),
                         name='g_bn_e2')
         print("e2 shape:", e2.shape)
 
         # e3: [None, 16, 16, 8, gf_dim*2] → [None, 8, 8, 4, gf_dim*4]
-        e3 = batch_norm(conv3D(input_=lrelu(e2), output_dim=gf_dim * 4, kernel_size=4, stride=2, name='g_conv_e3'),
+        e3 = instance_norm(conv3D(input_=lrelu(e2), output_dim=gf_dim * 4, kernel_size=4, stride=2, name='g_conv_e3'),
                         name='g_bn_e3')
         print("e3 shape:", e3.shape)
 
         # e4: [None, 8, 8, 4, gf_dim*4] → [None, 4, 4, 2, gf_dim*8]
-        e4 = batch_norm(conv3D(input_=lrelu(e3), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e4'),
+        e4 = instance_norm(conv3D(input_=lrelu(e3), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e4'),
                         name='g_bn_e4')
         print("e4 shape:", e4.shape)
 
         # e5: [None, 4, 4, 2, gf_dim*8] → [None, 2, 2, 1, gf_dim*8]
-        e5 = batch_norm(conv3D(input_=lrelu(e4), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e5'),
+        e5 = instance_norm(conv3D(input_=lrelu(e4), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_conv_e5'),
                         name='g_bn_e5')
         print("e5 shape:", e5.shape)
 
@@ -176,36 +198,31 @@ def Generator(image_3D,gf_dim = 64,reuse = False,is_training = None,name = 'gene
         current_keep_prob = tf.cond(is_training, lambda: 0.5, lambda: 1.0)
 
         # d2: [None, 2, 2, 1, gf_dim*8] → [None, 4, 4, 2, gf_dim*8], concat e4
-        d2 = deconv3D(input_=tf.nn.relu(e5), output_dim=gf_dim * 8, kernel_size=4, stride=2, name='g_deconv_d2')
+        d2 = resize_conv3D(input_=tf.nn.relu(e5), output_dim=gf_dim * 8, kernel_size=3, name='g_deconv_d2')
         d2 = tf.nn.dropout(d2, current_keep_prob)
-        d2 = tf.concat([batch_norm(input_=d2, name='g_bn_d2'), e4], 4)
+        d2 = tf.concat([instance_norm(input_=d2, name='g_bn_d2'), e4], 4)
         print("d2 shape:", d2.shape)
 
         # d3: [None, 4, 4, 2, gf_dim*8*2] → [None, 8, 8, 4, gf_dim*4], concat e3
-        d3 = deconv3D(input_=tf.nn.relu(d2), output_dim=gf_dim * 4, kernel_size=4, stride=2, name='g_deconv_d3')
+        d3 = resize_conv3D(input_=tf.nn.relu(d2), output_dim=gf_dim * 4, kernel_size=3, name='g_deconv_d3')
         d3 = tf.nn.dropout(d3, current_keep_prob)
-        d3 = tf.concat([batch_norm(input_=d3, name='g_bn_d3'), e3], 4)
+        d3 = tf.concat([instance_norm(input_=d3, name='g_bn_d3'), e3], 4)
         print("d3 shape:", d3.shape)
 
         # d4: [None, 8, 8, 4, gf_dim*4*2] → [None, 16, 16, 8, gf_dim*2], concat e2
-        d4 = deconv3D(input_=tf.nn.relu(d3), output_dim=gf_dim * 2, kernel_size=4, stride=2, name='g_deconv_d4')
+        d4 = resize_conv3D(input_=tf.nn.relu(d3), output_dim=gf_dim * 2, kernel_size=3, name='g_deconv_d4')
         d4 = tf.nn.dropout(d4, current_keep_prob)
-        d4 = tf.concat([batch_norm(input_=d4, name='g_bn_d4'), e2], 4)
+        d4 = tf.concat([instance_norm(input_=d4, name='g_bn_d4'), e2], 4)
         print("d4 shape:", d4.shape)
 
         # d5: [None, 16, 16, 8, gf_dim*2*2] → [None, 32, 32, 16, gf_dim], 不拼接 e1，阻断网格特征泄露
-        d5 = deconv3D(input_=tf.nn.relu(d4), output_dim=gf_dim, kernel_size=4, stride=2, name='g_deconv_d5')
+        d5 = resize_conv3D(input_=tf.nn.relu(d4), output_dim=gf_dim, kernel_size=3, name='g_deconv_d5')
         d5 = tf.nn.dropout(d5, current_keep_prob)
-        d5 = batch_norm(input_=d5, name='g_bn_d5')
+        d5 = instance_norm(input_=d5, name='g_bn_d5')
         print("d5 shape:", d5.shape)
 
-        # 【修改后】：d_final 拆分为两步
-        # 第一步：用 deconv3D 撑开分辨率，并保留足够的特征厚度 (gf_dim // 2)，保证边界锐利度
-        d_up = deconv3D(input_=tf.nn.relu(d5), output_dim=gf_dim // 2, kernel_size=4, stride=2, name='g_deconv_d6_up')
-        print("d_up shape:", d_up.shape)
-
-        # 第二步：接入 stride=1 的标准卷积作为"熨斗"，抹平反卷积网格噪点，压缩到 1 通道
-        d_final = conv3D(input_=lrelu(d_up), output_dim=1, kernel_size=3, stride=1, name='g_smooth_d6')
+        # d_final: [None, 32, 32, 16, gf_dim] → [None, 64, 64, 32, 1]
+        d_final = resize_conv3D(input_=tf.nn.relu(d5),output_dim=1,kernel_size=3,name='g_deconv_d6')
         print("d_final shape:", d_final.shape)
 
         return tf.nn.tanh(d_final)

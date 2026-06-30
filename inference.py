@@ -213,24 +213,7 @@ def inference():
     
     print("[INFO] 构建生成器...")
     gen_output = Generator(image_3D=test_data_ph, gf_dim=64, reuse=False, is_training=False, name='generator')
-
-    # ======= 【新增推理端图内动态截断与 STE 离散化】=======
-    # 1. 从输入数据 profile 通道提取当前样本的真实最大刻度 (替代训练时的 label_max)
-    mask_ph = test_data_ph[..., 1:2]
-    # 屏蔽盲区的填充值 (-2.0)，防止干扰 max 计算
-    masked_data = tf.where(mask_ph > 0.5, test_data_ph[..., 0:1], tf.fill(tf.shape(test_data_ph[..., 0:1]), -10.0))
-    label_max = tf.reduce_max(masked_data, axis=[1, 2, 3, 4], keepdims=True)
-
-    # 2. 动态范围截断
-    gen_clipped = tf.clip_by_value(gen_output, -1.0, label_max)
-
-    # 3. 直通估计器 (STE) 离散吸附 (与 train.py 完全一致)
-    step_size = 2.0 / 15.0
-    idx_floor = tf.round((gen_clipped - (-1.0)) / step_size)
-    idx_clipped = tf.clip_by_value(idx_floor, 0.0, 15.0)
-    gen_snapped = -1.0 + idx_clipped * step_size
-    gen_ste = gen_clipped + tf.stop_gradient(gen_snapped - gen_clipped)
-    # ===================================================
+    # 直接使用 gen_output，不做图内截断和 STE
 
     restore_vars = [v for v in tf.global_variables() if 'generator' in v.name]
     
@@ -264,16 +247,28 @@ def inference():
             batch_data = test_data[i:i+args.batch_size]
             batch_labels = test_labels[i:i+args.batch_size]
 
-            # 直接运行 gen_ste，拿到的已经是完美截断且离散的 16 阶梯色块
-            gen_val = sess.run(gen_ste, feed_dict={test_data_ph: batch_data})
+            # 直接运行网络获取连续场预测值
+            gen_val = sess.run(gen_output, feed_dict={test_data_ph: batch_data})
+            
+            # 全局真实码本（从训练集统计得出，不读取测试label，避免数据泄露）
+            # 对应整数 [0, 16, 33, 50, 68, 85, 102, 119, 136, 153, 170]
+            TRUE_STEPS_NORM = np.array([
+                -1.0000, -0.8745, -0.7412, -0.6078, -0.4667,
+                -0.3333, -0.2000, -0.0667,  0.0667,  0.2000,  0.3333
+            ], dtype=np.float32)
+
             for j in range(len(batch_data)):
-                raw_gen = gen_val[j]  # 形状: [64, 64, 32, 1]
+                raw_gen = gen_val[j]  # 连续的 [-1, 1] 矩阵 [64, 64, 32, 1]
 
-                # ======= 恢复 3D 中值滤波：作为空间多数投票器，消灭 STE 产生的椒盐孤岛 =======
-                # 注意：此时 raw_gen 已经是完美的 16 阶梯离散值，不需要再做 numpy 吸附
-                filtered_gen = median_filter(raw_gen, size=(3, 3, 3, 1))
+                # 全局码本就近吸附
+                diff = np.abs(raw_gen[..., np.newaxis] - TRUE_STEPS_NORM)
+                idx = np.argmin(diff, axis=-1)
+                snapped_gen = TRUE_STEPS_NORM[idx]
 
-                # 使用滤波后的干净色块计算指标
+                # 3D 中值滤波：空间多数投票，消灭椒盐孤岛
+                filtered_gen = median_filter(snapped_gen, size=(3, 3, 3, 1))
+
+                # 使用滤波后的结果计算指标和保存
                 fence_mse, blind_l1, blind_miou = compute_metrics(
                     filtered_gen, batch_labels[j], batch_data[j, ..., 1]
                 )
